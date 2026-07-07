@@ -1,0 +1,42 @@
+<mujoco model="planar_3R">
+    <compiler angle="radian" inertiafromgeom="true"/>
+    <option gravity="0 -9.81 0" timestep="0.002" integrator="RK4"/>
+    <!-- <option gravity="0 -9.81 0" timestep="0.002" integrator="RK4" density="1000" viscosity="0.001"/> -->
+    <!-- <option gravity="0 -9.81 0" timestep="0.002" integrator="implicitfast" density="1000" viscosity="0.001"/> -->
+
+    <default>
+        <joint type="hinge" axis="0 0 1" damping="0.05" frictionloss="0.01"/>
+        <geom type="box" condim="1" friction="0.5 0.005 0.0001"/>
+    </default>
+  
+    <worldbody>
+        <light diffuse=".5 .5 .5" pos="0 0 100" dir="0 0 -1"/>
+        <geom type="plane" size="4.5 4.5 0.1" rgba=".9 .9 .9 1"/>
+        <body name="body1" pos="0 0 0.1">
+            <joint name="shoulder_joint" pos="0 0 0" range="-3.14 3.14"/>
+            <geom type="box" size="0.5 .05 .01" pos="0.5 0 0" rgba=".9 0 0 1" density="500"/>
+
+            <body name="body2" pos="1.0 0 0">
+                <joint name="elbow_joint" pos="0 0 0" range="-3.0 3.0"/>
+                <geom type="box" size=".5 .05 .01" pos="0.5 0 0" rgba="0 0 .9 1" density="500"/>
+
+                <body name="body3" pos="1.0 0 0">
+		    		<joint name="wrist_joint" pos="0 0 0" range="-3.0 3.0"/>
+					<geom type="box" size=".125 .05 .01" pos="0.125 0 0" rgba="0 .9 0 1" density="500"/>
+					
+                    <site name="ee" pos="0.25 0 0" size="0.05" rgba="1 0 0 1"/>
+				</body>
+            </body>
+        </body>
+    </worldbody>
+
+    <actuator>
+        <motor name="tau_shoulder" joint="shoulder_joint" gear="1"/>
+        <motor name="tau_elbow" joint="elbow_joint" gear="1"/>
+        <motor name="tau_wrist" joint="wrist_joint" gear="1"/>
+    </actuator>
+
+    <keyframe>
+        <key name="home" qpos="0 0 0"/>
+	</keyframe>
+</mujoco>

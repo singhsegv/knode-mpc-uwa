@@ -1,0 +1,82 @@
+<?xml version="1.0"?>
+<!-- Planar 3R arm matching planar-3R.xml (MuJoCo) geometry and inertias.
+     Links are uniform boxes with density 500 kg/m^3:
+       link1/2: 1.0 x 0.1 x 0.02 m, m = 1.0 kg, COM at 0.5 m
+       link3:   0.25 x 0.1 x 0.02 m, m = 0.25 kg, COM at 0.125 m -->
+<robot name="planar_3R">
+  <link name="base_link"/>
+
+  <link name="link1">
+    <inertial>
+      <origin xyz="0.5 0 0" rpy="0 0 0"/>
+      <mass value="1.0"/>
+      <inertia ixx="0.000867" ixy="0" ixz="0" iyy="0.083367" iyz="0" izz="0.084167"/>
+    </inertial>
+    <visual>
+      <origin xyz="0.5 0 0" rpy="0 0 0"/>
+      <geometry><box size="1.0 0.1 0.02"/></geometry>
+      <material name="red"><color rgba="0.9 0 0 1"/></material>
+    </visual>
+  </link>
+
+  <joint name="shoulder_joint" type="revolute">
+    <parent link="base_link"/>
+    <child link="link1"/>
+    <origin xyz="0 0 0" rpy="0 0 0"/>
+    <axis xyz="0 0 1"/>
+    <limit lower="-3.14" upper="3.14" effort="100" velocity="100"/>
+    <dynamics damping="0.05" friction="0.01"/>
+  </joint>
+
+  <link name="link2">
+    <inertial>
+      <origin xyz="0.5 0 0" rpy="0 0 0"/>
+      <mass value="1.0"/>
+      <inertia ixx="0.000867" ixy="0" ixz="0" iyy="0.083367" iyz="0" izz="0.084167"/>
+    </inertial>
+    <visual>
+      <origin xyz="0.5 0 0" rpy="0 0 0"/>
+      <geometry><box size="1.0 0.1 0.02"/></geometry>
+      <material name="red"><color rgba="0 0.9 0 1"/></material>
+    </visual>
+  </link>
+
+  <joint name="elbow_joint" type="revolute">
+    <parent link="link1"/>
+    <child link="link2"/>
+    <origin xyz="1.0 0 0" rpy="0 0 0"/>
+    <axis xyz="0 0 1"/>
+    <limit lower="-3.0" upper="3.0" effort="100" velocity="100"/>
+    <dynamics damping="0.05" friction="0.01"/>
+  </joint>
+
+  <link name="link3">
+    <inertial>
+      <origin xyz="0.125 0 0" rpy="0 0 0"/>
+      <mass value="0.25"/>
+      <inertia ixx="0.000217" ixy="0" ixz="0" iyy="0.00131" iyz="0" izz="0.00151"/>
+    </inertial>
+    <visual>
+      <origin xyz="0.125 0 0" rpy="0 0 0"/>
+      <geometry><box size="0.25 0.1 0.02"/></geometry>
+      <material name="red"><color rgba="0 0 0.9 1"/></material>
+    </visual>
+  </link>
+
+  <joint name="wrist_joint" type="revolute">
+    <parent link="link2"/>
+    <child link="link3"/>
+    <origin xyz="1.0 0 0" rpy="0 0 0"/>
+    <axis xyz="0 0 1"/>
+    <limit lower="-3.0" upper="3.0" effort="100" velocity="100"/>
+    <dynamics damping="0.05" friction="0.01"/>
+  </joint>
+
+  <link name="ee"/>
+
+  <joint name="ee_fixed" type="fixed">
+    <parent link="link3"/>
+    <child link="ee"/>
+    <origin xyz="0.25 0 0" rpy="0 0 0"/>
+  </joint>
+</robot>

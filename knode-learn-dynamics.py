@@ -114,6 +114,8 @@ def load_data(data_path):
         qdot = data["qdot"]
         tau = data["tau"]
 
+        meta = data["meta"].item()
+
         data = np.hstack([t, q, qdot, tau])
 
     return data

@@ -1,0 +1,74 @@
+{
+    "name": "trajectories_combo_1",
+    "description": "Mixed circle, lemniscate, and line trajectories with varying centers, radii, and endpoints. Fixed duration=10s, omega=0.5.",
+    "trajectories": [
+        {
+            "type": "circle",
+            "duration": 20.0,
+            "omega": 0.5,
+            "cx": -0.3,
+            "cy": 1.2,
+            "r": 0.25
+        },
+        {
+            "type": "lemniscate",
+            "duration": 20.0,
+            "omega": 0.5,
+            "cx": 0.75,
+            "cy": 1.35,
+            "a": 0.30
+        },
+        {
+            "type": "line",
+            "duration": 20.0,
+            "omega": 0.5,
+            "lx0": 0.2,
+            "ly0": 1.25,
+            "lx1": 1.0,
+            "ly1": 1.25
+        },
+        {
+            "type": "circle",
+            "duration": 20.0,
+            "omega": 0.5,
+            "cx": 0.4,
+            "cy": 0.95,
+            "r": 0.45
+        },
+        
+        {
+            "type": "lemniscate",
+            "duration": 20.0,
+            "omega": 0.5,
+            "cx": -0.2,
+            "cy": 1.05,
+            "a": 0.40
+        },
+        {
+            "type": "line",
+            "duration": 20.0,
+            "omega": 0.5,
+            "lx0": 0.1,
+            "ly0": 0.9,
+            "lx1": 0.85,
+            "ly1": 1.55
+        },
+        {
+            "type": "lemniscate",
+            "duration": 20.0,
+            "omega": 0.5,
+            "cx": 0.55,
+            "cy": 0.85,
+            "a": 0.35
+        },
+        {
+            "type": "line",
+            "duration": 20.0,
+            "omega": 0.5,
+            "lx0": -0.15,
+            "ly0": 1.0,
+            "lx1": 0.55,
+            "ly1": 1.5
+        }
+    ]
+}

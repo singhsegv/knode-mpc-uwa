@@ -41,3 +41,22 @@ def lemniscate_trajectory(t, a=0.2, cx=0.5, cy=0.5, omega=0.3):
     xddot = x_phiphi * omega**2
     yddot = y_phiphi * omega**2
     return x, y, xdot, ydot, xddot, yddot
+
+
+def line_trajectory(t, x0, y0, x1, y1, omega=0.3):
+    """
+    Straight-line segment oscillating between endpoints (x0, y0) and (x1, y1).
+    """
+    phi = omega * t
+    s, c = np.sin(phi), np.cos(phi)
+    cx = 0.5 * (x0 + x1)
+    cy = 0.5 * (y0 + y1)
+    dx = 0.5 * (x1 - x0)
+    dy = 0.5 * (y1 - y0)
+    x = cx + dx * s
+    y = cy + dy * s
+    xdot = dx * omega * c
+    ydot = dy * omega * c
+    xddot = -dx * omega**2 * s
+    yddot = -dy * omega**2 * s
+    return x, y, xdot, ydot, xddot, yddot

@@ -8,7 +8,7 @@ from pinocchio.visualize import MeshcatVisualizer
 
 
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
-DEFAULT_URDF = os.path.join(SCRIPT_DIR, "planar-3R.urdf")
+DEFAULT_URDF = os.path.join(SCRIPT_DIR, "planar-2R.urdf")
 
 GRAVITY = np.array([0.0, -9.81, 0.0])
 
@@ -51,8 +51,13 @@ class PlanarArm:
     def forward_dynamics(self, q, qdot, tau):
         return pin.aba(self.model, self.data, q, qdot, tau)
 
+    def move_to(self, q):
+        """Just updating the frame placements stuff for easy peazy beginning."""
+        pin.forwardKinematics(self.model, self.data, q)
+        pin.updateFramePlacements(self.model, self.data)
+
     def ee_jacobian(self, q):
-        """3 x nv Jacobian for EE (x, y, theta_z) in the arm plane."""
+        """2 x 2 Jacobian for EE (x, y) in the arm plane."""
         pin.forwardKinematics(self.model, self.data, q)
         pin.updateFramePlacements(self.model, self.data)
         jac = pin.computeFrameJacobian(
@@ -64,7 +69,7 @@ class PlanarArm:
         )
 
         # Linear jacobian for x, y and Angular jacobian across z axis
-        return np.vstack((jac[0:2], jac[5:6]))
+        return jac[0:2]
 
     def step_rk4(self, q, qdot, tau, dt):
         """

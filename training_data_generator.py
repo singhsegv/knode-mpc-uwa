@@ -15,6 +15,7 @@ from utils.trajectory_generator import circle_trajectory, lemniscate_trajectory,
 
 DOF = 2
 DT = 0.002  # 500 Hz
+# DT = 0.01  # 100 Hz
 Kp = np.array([50.0, 50.0])
 Kd = np.array([4.0, 4.0])
 
@@ -102,18 +103,18 @@ def collect(duration, trajectory, cx, cy, omega, a=None, r=None, lx0=None, ly0=N
         e = q_des - q
         ed = qdot_des - qdot
         qdd_fb = qddot_des + Kp * e + Kd * ed
-        tau = robot.inverse_dynamics(q, qdot, qdd_fb)
+        tau = robot.inverse_dynamics(q, qdot, qdd_fb).copy()
         # tau = np.array([0.0, 0.0, 0.0])
 
         # TODO: We might be sketchy: Check data written at the beginning/end of the step
-        q_log[i] = q
-        qdot_log[i] = qdot
-        tau_log[i] = tau
+        q_log[i] = q.copy()
+        qdot_log[i] = qdot.copy()
+        tau_log[i] = tau.copy()
 
         robot.display(q)
 
+        # These get saved in the next iteration
         q, qdot = robot.step_rk4(q, qdot, tau, DT)
-        # q, qdot = robot.imperfect_dynamics_step(q, qdot, tau, DT)
 
     return {
         "t": t_log,

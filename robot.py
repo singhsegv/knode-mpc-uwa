@@ -51,8 +51,47 @@ class PlanarArm:
     def forward_dynamics(self, q, qdot, tau):
         return pin.aba(self.model, self.data, q, qdot, tau)
 
+    def ee_position(self, q):
+        """End-effector (x, y) from Pinocchio FK."""
+        pin.forwardKinematics(self.model, self.data, q)
+        pin.updateFramePlacements(self.model, self.data)
+        return np.array(self.data.oMf[self.ee_frame_id].translation[:2])
+
+    def ee_positions(self, q_traj):
+        """Map (N, nq) joint trajectory to (N, 2) EE positions."""
+        xy = np.empty((len(q_traj), 2))
+        for i, q in enumerate(q_traj):
+            xy[i] = self.ee_position(q)
+        return xy
+
+    def link_positions(self, q):
+        """Base, elbow (joint 2), and EE positions in the plane."""
+        pin.forwardKinematics(self.model, self.data, q)
+        pin.updateFramePlacements(self.model, self.data)
+        base = np.zeros(2)
+        elbow = np.array(self.data.oMi[2].translation[:2])
+        ee = np.array(self.data.oMf[self.ee_frame_id].translation[:2])
+        return base, elbow, ee
+
+    def simulate_rollout(self, q0, qdot0, taus, dt):
+        """
+        Pinocchio RK4 rollout using a sequence of torques.
+        Returns (N, 2) q and (N, 2) qdot logs (pre-step convention, same as data_generator).
+        """
+        n = len(taus)
+        q_log = np.empty((n, 2))
+        qdot_log = np.empty((n, 2))
+
+        q, qdot = np.asarray(q0, dtype=float).copy(), np.asarray(qdot0, dtype=float).copy()
+        for i in range(n):
+            q_log[i] = q
+            qdot_log[i] = qdot
+            q, qdot = self.step_rk4(q, qdot, taus[i], dt)
+
+        return q_log, qdot_log
+
     def move_to(self, q):
-        """Just updating the frame placements stuff for easy peazy beginning."""
+        """Update frame placements for visualization / FK."""
         pin.forwardKinematics(self.model, self.data, q)
         pin.updateFramePlacements(self.model, self.data)
 
@@ -73,9 +112,14 @@ class PlanarArm:
 
     def step_rk4(self, q, qdot, tau, dt):
         """
+        NOTE: This AND `imperfect_dynamics_step` actually step the dynamics. Doesn't return the dx/dt
         TODO: Might be sketchy -> Check
         """
         def rhs(q_state, qdot_state):
+            # print("------------------------")
+            # print(self.forward_dynamics(q_state, qdot_state, tau + self.gravity_forces(q_state)))
+            # print(self.forward_dynamics(q_state, qdot_state, tau))
+            # print("------------------------")
             qdd = self.forward_dynamics(q_state, qdot_state, tau)
             return qdot_state, qdd
 
@@ -92,6 +136,7 @@ class PlanarArm:
 
     def imperfect_dynamics_step(self, q, qdot, tau, dt):
         """
+        NOTE: This AND `step_rk4` actually step the dynamics. Doesn't return the dx/dt
         Removes the gravity from forward dynamics.
         """
         def rhs(q_state, qdot_state):
@@ -109,6 +154,15 @@ class PlanarArm:
         qdot_next = qdot + (dt / 6.0) * (k1_v + 2.0 * k2_v + 2.0 * k3_v + k4_v)
 
         return q_next, qdot_next
+
+    def get_nominal_dynamics(self, q, qdot, tau):
+        qdd = self.forward_dynamics(q, qdot, tau)
+        return qdot, qdd
+    
+    def get_imperfect_dynamics(self, q, qdot, tau):
+        tau_eff = tau + self.gravity_forces(q)
+        qdd = self.forward_dynamics(q, qdot, tau_eff)
+        return qdot, qdd
 
     def display(self, q):
         if self.viz is not None:

@@ -3,6 +3,9 @@ import os
 import numpy as np
 import pinocchio as pin
 
+import torch
+from torchdiffeq import odeint
+
 import imageio.v2 as imageio
 from pinocchio.visualize import MeshcatVisualizer
 
@@ -86,7 +89,8 @@ class PlanarArm:
         for i in range(n):
             q_log[i] = q
             qdot_log[i] = qdot
-            q, qdot = self.step_rk4(q, qdot, taus[i], dt)
+            # q, qdot = self.step_rk4(q, qdot, taus[i], dt)
+            q, qdot = self.step_torchdiffeq(q, qdot, taus[i], dt)
 
         return q_log, qdot_log
 
@@ -154,6 +158,56 @@ class PlanarArm:
         qdot_next = qdot + (dt / 6.0) * (k1_v + 2.0 * k2_v + 2.0 * k3_v + k4_v)
 
         return q_next, qdot_next
+
+    def step_torchdiffeq(self, q, qdot, tau, dt):
+        """
+        Steps the dynamics using torchdiffeq's RK4 solver.
+        Enforces a Zero-Order Hold on `tau` by capturing it in the closure.
+        """
+        q = torch.tensor(q, dtype=torch.float64)
+        qdot = torch.tensor(qdot, dtype=torch.float64)
+        
+        # 1. Define the ODE function with the strict signature func(t, y)
+        def ode_func(t, state):
+            q_state, qdot_state = state
+
+            q_state = q_state.detach().cpu().numpy()
+            qdot_state = qdot_state.detach().cpu().numpy()
+            
+            # Calculate acceleration. `tau` is captured from the outer scope, 
+            # ensuring it remains constant across all internal RK4 substeps.
+            qdd = self.forward_dynamics(q_state, qdot_state, tau)
+            
+            # Return the derivatives (dq/dt, dqdot/dt) as a tuple
+            return (torch.tensor(qdot_state, dtype=torch.float64), torch.tensor(qdd, dtype=torch.float64))
+
+        # 2. Define the integration time span [0, dt]
+        # Must match the dtype and device of your state tensors
+        t_span = torch.tensor([0.0, dt], dtype=q.dtype, device=q.device)
+
+        # 3. Pack the initial conditions into a tuple
+        initial_state = (q, qdot)
+
+        # 4. Integrate
+        # - method="rk4" ensures we use the exact same math as your manual version
+        # - options={"step_size": dt} forces the solver to take exactly one step 
+        #   instead of trying to adapt the step size.
+        trajectory = odeint(
+            ode_func, 
+            initial_state, 
+            t_span, 
+            method="rk4", 
+            options={"step_size": dt}
+        )
+
+        # 5. Extract the final state. 
+        # `trajectory` contains the states at both t=0 and t=dt.
+        # trajectory[0] is the history of `q`, trajectory[1] is the history of `qdot`.
+        # We index [-1] to get the values at t=dt.
+        q_next = trajectory[0][-1]
+        qdot_next = trajectory[1][-1]
+
+        return q_next.detach().cpu().numpy(), qdot_next.detach().cpu().numpy()
 
     def get_nominal_dynamics(self, q, qdot, tau):
         qdd = self.forward_dynamics(q, qdot, tau)

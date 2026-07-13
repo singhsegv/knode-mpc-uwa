@@ -1,2 +1,4 @@
 __pycache__/
 **/**/*.npz
+archive-runs-data/
+.DS_Store

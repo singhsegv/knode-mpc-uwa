@@ -6,6 +6,7 @@ import os
 import time
 import argparse
 
+import matplotlib.pyplot as plt
 import numpy as np
 from scipy.optimize import fsolve
 
@@ -20,8 +21,80 @@ Kp = np.array([50.0, 50.0])
 Kd = np.array([4.0, 4.0])
 
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
-DEFAULT_CONFIG = os.path.join(SCRIPT_DIR, "configurations", "datasets", "trajectories_combo_dur20_ome0p5.json")
+DEFAULT_CONFIG = os.path.join(SCRIPT_DIR, "configurations", "datasets", "demo1.json")
 DEFAULT_OUTPUT_DIR = os.path.join(SCRIPT_DIR, "data")
+PLOT_OUTPUT_DIR = os.path.join(SCRIPT_DIR, "outputs")
+
+
+def plot_collected_trajectory(
+    t_log,
+    q_log,
+    robot,
+    trajectory=None,
+    max_steps=None,
+    output_dir=PLOT_OUTPUT_DIR,
+    show=False,
+):
+    """
+    Plot collected rollout in joint and task space.
+
+    t_log: (N,) time [s]
+    q_log: (N, 2) joint positions
+    """
+    n = len(t_log)
+    if max_steps is not None:
+        n = min(n, max_steps)
+
+    time = t_log[:n]
+    q = q_log[:n]
+    xy = robot.ee_positions(q)
+
+    suffix = f"_{trajectory}" if trajectory is not None else ""
+    title_suffix = f" ({trajectory})" if trajectory is not None else ""
+
+    fig, axes = plt.subplots(2, 2, figsize=(12, 8), sharex=True)
+    fig.suptitle(f"Collected trajectory{title_suffix}", fontsize=13)
+
+    joint_labels = ["q1", "q2"]
+    for i in range(2):
+        ax = axes[0, i]
+        ax.plot(time, q[:, i], "b-", linewidth=1.5)
+        ax.set_ylabel(joint_labels[i])
+        ax.grid(True, alpha=0.3)
+
+    task_labels = ["x", "y"]
+    for i in range(2):
+        ax = axes[1, i]
+        ax.plot(time, xy[:, i], "b-", linewidth=1.5)
+        ax.set_xlabel("time [s]")
+        ax.set_ylabel(task_labels[i])
+        ax.grid(True, alpha=0.3)
+
+    fig.tight_layout()
+
+    os.makedirs(output_dir, exist_ok=True)
+    save_path = os.path.join(output_dir, f"collected_trajectory{suffix}.png")
+    fig.savefig(save_path, dpi=150)
+
+    xy_fig, xy_ax = plt.subplots(figsize=(6, 6))
+    xy_ax.plot(xy[:, 0], xy[:, 1], "b-", linewidth=1.5)
+    xy_ax.set_xlabel("x [m]")
+    xy_ax.set_ylabel("y [m]")
+    xy_ax.set_title(f"Task-space path{title_suffix}")
+    xy_ax.axis("equal")
+    xy_ax.grid(True, alpha=0.3)
+    xy_path = os.path.join(output_dir, f"collected_task_space_path{suffix}.png")
+    xy_fig.tight_layout()
+    xy_fig.savefig(xy_path, dpi=150)
+
+    if show:
+        plt.show()
+    else:
+        plt.close(fig)
+        plt.close(xy_fig)
+
+    print(f"Saved plots -> {save_path}, {xy_path}")
+    return fig, save_path
 
 
 def ee_fk(q):
@@ -114,7 +187,15 @@ def collect(duration, trajectory, cx, cy, omega, a=None, r=None, lx0=None, ly0=N
         robot.display(q)
 
         # These get saved in the next iteration
-        q, qdot = robot.step_rk4(q, qdot, tau, DT)
+        # q, qdot = robot.step_rk4(q, qdot, tau, DT)
+        q, qdot = robot.step_torchdiffeq(q, qdot, tau, DT)
+
+    plot_collected_trajectory(
+        t_log, q_log, robot,
+        trajectory=trajectory,
+        max_steps=10000,
+        show=False,
+    )
 
     return {
         "t": t_log,

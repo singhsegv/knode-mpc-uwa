@@ -7,10 +7,9 @@ import numpy as np
 import torch
 
 from pinocchio.visualize import MeshcatVisualizer
-from robot import PlanarArm
+from robots.simulator import PlanarArm
 
-SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
-DEFAULT_OUTPUT_DIR = os.path.join(SCRIPT_DIR, "outputs")
+DEFAULT_OUTPUT_DIR = None # NOTE: Modified by run_experiment.py
 
 
 def _to_numpy(states):
@@ -96,13 +95,19 @@ def save_pinocchio_simulation_video(
     return output_path
 
 
-def plot_trajectory_comparison( y_hat, ground_truth, dt=0.002, epoch=None, max_steps=None, output_dir=DEFAULT_OUTPUT_DIR, show=False, record_video=True, video_fps=30):
+def plot_trajectory_comparison(
+        y_hat, ground_truth, dt=0.002, epoch=None, max_steps=None, output_dir=None,
+        show=False, record_video=True, video_fps=30
+    ):
     """
     Compare predicted rollout vs ground truth in joint and task space.
 
     y_hat: (N, 6) predicted [q, qdot, tau]
     ground_truth: (N, 7) [t, q, qdot, tau] or (N, 6)
     """
+    if output_dir is None:
+        output_dir = DEFAULT_OUTPUT_DIR
+
     robot = PlanarArm(enable_viz=False)
 
     t_pred, q_pred, _, _ = _extract_states(y_hat)
@@ -185,7 +190,7 @@ def plot_trajectory_comparison( y_hat, ground_truth, dt=0.002, epoch=None, max_s
         plt.close(fig)
         plt.close(xy_fig)
 
-    print(f"Saved plots -> {save_path}, {xy_path}")
+    # print(f"Saved plots -> {save_path}, {xy_path}")
 
     # video_path = None
     # if record_video:

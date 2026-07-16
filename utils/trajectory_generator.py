@@ -60,3 +60,4 @@ def line_trajectory(t, x0, y0, x1, y1, omega=0.3):
     xddot = -dx * omega**2 * s
     yddot = -dy * omega**2 * s
     return x, y, xdot, ydot, xddot, yddot
+    

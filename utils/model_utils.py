@@ -2,10 +2,10 @@ import os
 import torch
 
 from torch import nn
-from robot import PlanarArm
+from robots.simulator import PlanarArm
 
 
-CHECKPOINT_DIR = "checkpoints"
+CHECKPOINT_DIR = None # NOTE: Modified by run_experiment.py
 DTYPE = torch.float64
 
 
@@ -40,6 +40,10 @@ def latest_checkpoint_epoch():
             epochs.append(int(name[len("neural_ode_epoch_"):-3]))
             
     return max(epochs) if epochs else None
+
+
+def generate_model():
+    pass
 
 
 def evaluate_model(model, test_data):

@@ -2,18 +2,16 @@ import os
 
 import torch
 from torch import nn
-from model import PlanarArmKnodeModel
 
+from knode.model import PlanarArmKnodeModel
 from utils.data_utils import load_data
 from utils.model_utils import save_model_checkpoint, evaluate_model
-
-import numpy as np
-from visualize_trajectory import plot_trajectory_comparison
+from utils.visualize_trajectory import plot_trajectory_comparison
 
 OUTPUT_DIR = "outputs"
 
-LOOKAHEAD = 2
-EPOCHS = 5000
+LOOKAHEAD = 20
+EPOCHS = 15000
 LR = 0.001
 
 
@@ -61,13 +59,12 @@ def train_model(model, data, test_data):
         loss.backward()
         optimizer.step()
 
-        if epoch % 100 == 0:
+        if epoch % 50 == 0:
             print(f"Epoch {epoch}, Loss: {loss.item()}")
 
-        if epoch % 250 == 0:
+        if epoch % 200 == 0:
             save_model_checkpoint(model, epoch)
 
-        if epoch % 250 == 0:
             y_hat, loss = evaluate_model(model, test_data)
             plot_trajectory_comparison(
                 y_hat,
@@ -78,6 +75,7 @@ def train_model(model, data, test_data):
                 show=False,
             )
 
+
     # y_hat, loss = evaluate_model(model, test_data)
     # plot_trajectory_comparison(
     #     y_hat,
@@ -87,19 +85,4 @@ def train_model(model, data, test_data):
     #     max_steps=10000,
     #     show=False,
     # )
-
-
-if __name__ == "__main__":
-    data_dir = "/Users/singhsegv/upenn-research-scalar/implementations/learning-manipulator-dynamics/knode-mpc-planar-arm/data/trajectories_combo_1/"
-    data = load_data(data_dir)
-
-    model = PlanarArmKnodeModel(
-        step_size=0.002, nominal_only=False, perfect_nominal=True
-    ).to(torch.float64)
-
-    # TODO: Better dataset
-    train_data = data[0]
-    test_data = data[0]
-
-    train_model(model, train_data, test_data)
 

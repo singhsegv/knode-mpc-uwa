@@ -1,13 +1,7 @@
 """
-Steps:
-1. Use nominal model as "subject to" for MPC
-2.. Use KNODE trained model as "subject to" for MPC
-
-
 Training:     PyTorch  + Pinocchio (frozen nominal) + NN (trainable)
 MPC:          CasADi   + pinocchio.casadi (nominal) + exported NN weights
 Evaluation:   Pinocchio true plant (with mismatch)
-
 """
 import numpy as np
 import torch
@@ -143,101 +137,6 @@ class Control(object):
         forces[forces < 0] = np.square(self.forces_old[forces < 0]) * self.k_t
         cmd_motor_speeds = np.clip(np.sqrt(forces / self.k_t), self.rotor_min, self.rotor_max)
         output = self.cf_map @ (self.k_t * np.square(cmd_motor_speeds))
-
-        self.init_mpc += 1
-        self.forces_old = forces
-        self.x = sol.value(opti.x)
-        self.g = sol.value(opti.lam_g)
-
-        return {'cmd_thrust': output[0], 'cmd_moment': output[1:]}
-
-
-class GPControl(Control):
-    """
-    GP-MPC using a locally linearized GP residual around the current operating point.
-    This keeps the GP inside the CasADi optimization graph without black-box callbacks.
-    """
-
-    def __init__(self, gp_predict_fn):
-        super().__init__()
-        self.gp_predict_fn = gp_predict_fn
-        self._last_control = np.array([0.35, 0.0, 0.0, 0.0])
-        self._build_parametric_dynamics()
-
-    def _linearize_gp(self, state, control):
-        x0 = np.concatenate([
-            state['x'], state['v'], state['q'], state['w'], np.atleast_1d(control['cmd_thrust'])[:1],
-            np.asarray(control['cmd_moment'], dtype=float).ravel()[:3],
-        ])
-        u0 = np.array([
-            float(np.atleast_1d(control['cmd_thrust'])[0]),
-            *np.asarray(control['cmd_moment'], dtype=float).ravel()[:3],
-        ])
-        base = self.gp_predict_fn(x0)
-        jac = np.zeros((13, 17))
-        eps = 1e-4
-        for i in range(17):
-            xp = x0.copy()
-            xp[i] += eps
-            jac[:, i] = (self.gp_predict_fn(xp) - base) / eps
-        return base, jac, x0
-
-    def _build_parametric_dynamics(self):
-        x = MX.sym('x', 13, 1)
-        u = MX.sym('u', 4, 1)
-        base = MX.sym('gp_base', 13, 1)
-        jac = MX.sym('gp_jac', 13, 17)
-        xu0 = MX.sym('xu0', 17, 1)
-        nominal = self._nominal_casadi(x, u)
-        xu = vertcat(x, u)
-        xdot = nominal + base + jac @ (xu - xu0)
-        self._gp_step_fn = Function('gp_step', [x, u, base, jac, xu0], [x + MPC_DT * xdot])
-
-    def update(self, state, flat):
-        base, jac, xu0 = self._linearize_gp(state, {
-            'cmd_thrust': self._last_control[0],
-            'cmd_moment': self._last_control[1:],
-        })
-
-        opti = Opti()
-        n = MPC_HORIZON
-        x = opti.variable(13, n + 1)
-        u = opti.variable(4, n)
-        gp_base = opti.parameter(13, 1)
-        gp_jac = opti.parameter(13, 17)
-        gp_xu0 = opti.parameter(17, 1)
-        opti.set_value(gp_base, base)
-        opti.set_value(gp_jac, jac)
-        opti.set_value(gp_xu0, xu0)
-
-        opti.minimize(
-            sumsqr(x[0:3, :] - repmat(DM(flat['x']), 1, n + 1))
-            + sumsqr(x[3:6, :] - repmat(DM(flat['x_dot']), 1, n + 1))
-            + sumsqr(x[6:9, :])
-            + sumsqr(x[9, :] - 1.0)
-            + sumsqr(x[10:13, :])
-            + sumsqr(u)
-        )
-
-        for k in range(n):
-            x_next = self._gp_step_fn(x[:, k], u[:, k], gp_base, gp_jac, gp_xu0)
-            opti.subject_to(x[:, k + 1] == x_next)
-
-        opti.subject_to(opti.bounded(0.0, u[0, :], 0.575))
-        opti.subject_to(x[:, 0] == vertcat(state['x'], state['v'], state['q'], state['w']))
-        opti.solver('ipopt', dict(print_time=False), dict(print_level=0, warm_start_init_point='yes'))
-
-        if self.init_mpc >= 1:
-            opti.set_initial(opti.x, self.x)
-            opti.set_initial(opti.lam_g, self.g)
-
-        sol = opti.solve()
-
-        forces = np.squeeze(self.fc_map @ np.squeeze(np.array([sol.value(u[:, 0])])))
-        forces[forces < 0] = np.square(self.forces_old[forces < 0]) * self.k_t
-        cmd_motor_speeds = np.clip(np.sqrt(forces / self.k_t), self.rotor_min, self.rotor_max)
-        output = self.cf_map @ (self.k_t * np.square(cmd_motor_speeds))
-        self._last_control = np.array([float(output[0]), *np.asarray(output[1:]).ravel()[:3]])
 
         self.init_mpc += 1
         self.forces_old = forces

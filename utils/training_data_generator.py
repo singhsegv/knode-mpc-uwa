@@ -10,7 +10,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 from scipy.optimize import fsolve
 
-from robot import PlanarArm
+from robots.simulator import PlanarArm
 from utils.trajectory_generator import circle_trajectory, lemniscate_trajectory, line_trajectory
 
 
@@ -21,9 +21,11 @@ Kp = np.array([50.0, 50.0])
 Kd = np.array([4.0, 4.0])
 
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
-DEFAULT_CONFIG = os.path.join(SCRIPT_DIR, "configurations", "datasets", "demo1.json")
-DEFAULT_OUTPUT_DIR = os.path.join(SCRIPT_DIR, "data")
-PLOT_OUTPUT_DIR = os.path.join(SCRIPT_DIR, "outputs")
+PROJECT_ROOT = os.path.dirname(SCRIPT_DIR)
+DATASETS_DIR = os.path.join(PROJECT_ROOT, "config", "datasets")
+DEFAULT_CONFIG_NAME = "demo1"
+DEFAULT_OUTPUT_DIR = os.path.join(PROJECT_ROOT, "data")
+PLOT_OUTPUT_DIR = os.path.join(PROJECT_ROOT, "outputs")
 
 
 def plot_collected_trajectory(
@@ -93,7 +95,7 @@ def plot_collected_trajectory(
         plt.close(fig)
         plt.close(xy_fig)
 
-    print(f"Saved plots -> {save_path}, {xy_path}")
+    # print(f"Saved plots -> {save_path}, {xy_path}")
     return fig, save_path
 
 
@@ -127,6 +129,9 @@ def collect(duration, trajectory, cx, cy, omega, a=None, r=None, lx0=None, ly0=N
     q_log = np.empty((n_steps, DOF))
     qdot_log = np.empty((n_steps, DOF))
     tau_log = np.empty((n_steps, DOF))
+    des_ee_pos_log = np.empty((n_steps, 2))
+    des_ee_vel_log = np.empty((n_steps, 2))
+    des_ee_acc_log = np.empty((n_steps, 2))
 
     if trajectory == "line":
         x_start, y_start = lx1, ly1
@@ -139,10 +144,10 @@ def collect(duration, trajectory, cx, cy, omega, a=None, r=None, lx0=None, ly0=N
     robot.move_to(q_initial)
     q = q_initial.copy()
 
-    robot.display(q)
+    # robot.display(q)
 
-    if enable_viz:
-        time.sleep(2)
+    # if enable_viz:
+    #     time.sleep(2)
 
     qdot = np.zeros(DOF)
     q_prev = q.copy() # Just as a seed for the solver
@@ -160,6 +165,10 @@ def collect(duration, trajectory, cx, cy, omega, a=None, r=None, lx0=None, ly0=N
 
         # Holding a static pose
         # x, y, xdot, ydot, xddot, yddot = cx, cy, 0.0, 0.0, 0.0, 0.0
+
+        des_ee_pos_log[i] = (x, y)
+        des_ee_vel_log[i] = (xdot, ydot)
+        des_ee_acc_log[i] = (xddot, yddot)
 
         # ---------------------------------------------
         # Computer Torque Controller Implementation
@@ -184,7 +193,7 @@ def collect(duration, trajectory, cx, cy, omega, a=None, r=None, lx0=None, ly0=N
         qdot_log[i] = qdot.copy()
         tau_log[i] = tau.copy()
 
-        robot.display(q)
+        # robot.display(q)
 
         # These get saved in the next iteration
         # q, qdot = robot.step_rk4(q, qdot, tau, DT)
@@ -202,6 +211,9 @@ def collect(duration, trajectory, cx, cy, omega, a=None, r=None, lx0=None, ly0=N
         "q": q_log,
         "qdot": qdot_log,
         "tau": tau_log,
+        "des_ee_pos": des_ee_pos_log,
+        "des_ee_vel": des_ee_vel_log,
+        "des_ee_acc": des_ee_acc_log,
         "dt": DT,
         "meta": {
             "trajectory": trajectory,
@@ -248,6 +260,9 @@ def save_log(output_path, log):
         q=log["q"],
         qdot=log["qdot"],
         tau=log["tau"],
+        des_ee_pos=log["des_ee_pos"],
+        des_ee_vel=log["des_ee_vel"],
+        des_ee_acc=log["des_ee_acc"],
         dt=np.array(log["dt"]),
         meta=np.array(log["meta"], dtype=object),
     )
@@ -255,22 +270,26 @@ def save_log(output_path, log):
 
 def main():
     parser = argparse.ArgumentParser(description="Collect trajectory training data from a JSON config at 500 Hz (Pinocchio).")
-    parser.add_argument("--config", type=str, default=DEFAULT_CONFIG, help="Trajectory combo JSON file")
+    parser.add_argument("--config", type=str, default=DEFAULT_CONFIG_NAME, help="JSON filename under configurations/datasets/")
     parser.add_argument("--output-dir", type=str, default=None, help="Directory for .npz files (default: data/<config name>/)",)
     parser.add_argument("--viz", action="store_true", help="Enable Meshcat visualization")
     args = parser.parse_args()
 
-    with open(args.config) as f:
+    config_path = os.path.join(DATASETS_DIR, f"{args.config}.json")
+    with open(config_path) as f:
         config = json.load(f)
 
     combo_name = config["name"]
     output_dir = args.output_dir or os.path.join(DEFAULT_OUTPUT_DIR, combo_name)
 
-    for i, spec in enumerate(config["trajectories"]):
-        output_path = os.path.join(output_dir, f"{i:02d}_{spec['type']}.npz")
-        log = collect_from_spec(spec, enable_viz=args.viz)
-        save_log(output_path, log)
-        print(f"Saved {len(log['t'])} samples at {1.0 / DT:.0f} Hz -> {output_path}")
+    for split in ("train", "test"):
+        specs = config[f"{split}_trajectories"]
+        split_dir = os.path.join(output_dir, split)
+        for i, spec in enumerate(specs):
+            output_path = os.path.join(split_dir, f"{i:02d}_{spec['type']}.npz")
+            log = collect_from_spec(spec, enable_viz=args.viz)
+            save_log(output_path, log)
+            print(f"Saved {len(log['t'])} samples at {1.0 / DT:.0f} Hz -> {output_path}")
 
 
 if __name__ == "__main__":

@@ -1,4 +1,12 @@
-# 2D Planar Arm learning
+# Learning 2D Planar Arm Dynamics 
+
+## Running Experiments
+```
+python run_experiment.py --dataset evaluation1 --model basic1
+
+# optional: --epochs 500 --lr 0.001
+```
+
 
 ## About
 1. Data Collection Harness: `simulate.py`

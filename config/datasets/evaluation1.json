@@ -1,0 +1,24 @@
+{
+    "name": "evaluation1",
+    "description": "Basic AF circle train; held-out lemniscate for test.",
+    "train_trajectories": [
+        {
+            "type": "circle",
+            "duration": 20.0,
+            "omega": 0.5,
+            "cx": -0.3,
+            "cy": 1.2,
+            "r": 0.25
+        }
+    ],
+    "test_trajectories": [
+        {
+            "type": "circle",
+            "duration": 10.0,
+            "omega": 0.5,
+            "cx": 0.5,
+            "cy": 1.0,
+            "r": 0.1
+        }
+    ]
+}

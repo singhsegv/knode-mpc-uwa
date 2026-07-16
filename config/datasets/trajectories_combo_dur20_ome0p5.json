@@ -1,7 +1,7 @@
 {
     "name": "trajectories_combo_1",
     "description": "Mixed circle, lemniscate, and line trajectories with varying centers, radii, and endpoints. Fixed duration=10s, omega=0.5.",
-    "trajectories": [
+    "train_trajectories": [
         {
             "type": "circle",
             "duration": 20.0,
@@ -35,7 +35,6 @@
             "cy": 0.95,
             "r": 0.45
         },
-        
         {
             "type": "lemniscate",
             "duration": 20.0,
@@ -52,7 +51,9 @@
             "ly0": 0.9,
             "lx1": 0.85,
             "ly1": 1.55
-        },
+        }
+    ],
+    "test_trajectories": [
         {
             "type": "lemniscate",
             "duration": 20.0,

@@ -9,9 +9,7 @@ from pinocchio.visualize import MeshcatVisualizer
 
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 DEFAULT_URDF = os.path.join(SCRIPT_DIR, "planar-2R.urdf")
-
 GRAVITY = np.array([0.0, -9.81, 0.0])
-
 
 class PlanarArm:
     """

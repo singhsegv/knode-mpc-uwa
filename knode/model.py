@@ -1,46 +1,69 @@
-"""
-TODO: Check everything here. All the shapes.
-"""
 import torch
 import numpy as np
 from torch import nn
 from torchdiffeq import odeint_adjoint
 
-from robot import PlanarArm
+from robots.simulator import PlanarArm
+
+
+ACTIVATIONS = {
+    "tanh": nn.Tanh,
+    "relu": nn.ReLU,
+    "elu": nn.ELU,
+    "silu": nn.SiLU,
+}
+
+
+def create_residual_mlp(input_dim, output_dim, hidden_layers, hidden_neurons, activation):
+    """
+    Build MLP: input -> (Linear+act) * hidden_layers -> Linear(output).
+    """
+    act_name = activation.lower()
+
+    if act_name not in ACTIVATIONS:
+        raise ValueError(f"Unknown activation '{activation}'. Expected one of {sorted(ACTIVATIONS)}")
+
+    act_cls = ACTIVATIONS[act_name]
+    layers = []
+    in_features = input_dim
+
+    layers.append(nn.Linear(in_features, hidden_neurons))
+    layers.append(act_cls())
+
+    for _ in range(hidden_layers):
+        layers.append(nn.Linear(hidden_neurons, hidden_neurons))
+        layers.append(act_cls())
+
+    layers.append(nn.Linear(hidden_neurons, output_dim))
+    return nn.Sequential(*layers)
 
 
 class PlanarArmODEFunc(nn.Module):
     """
     Vector field for the manipulator model.
     """
-    def __init__(self, robot, step_size, nominal_only=False, perfect_nominal=False):
+    def __init__(self, robot, model_cfg):
         super().__init__()
-        # TODO: Sketchy input and output shapes
-        # TODO: Fix the hardcoded dimensions later
-
         self.robot = robot
-        self.step_size = step_size
 
-        self.residual_dynamics_network = nn.Sequential(
-            nn.Linear(6, 32),
-            nn.Tanh(),
-            nn.Linear(32, 64),
-            nn.Tanh(),
-            nn.Linear(64, 32),
-            nn.Tanh(),
-            nn.Linear(32, 6),
+        # Input Size: 6 (q, qdot, tau) | Output Size: 4 (q, qdot)
+        self.residual_dynamics_network = create_residual_mlp(
+            input_dim=6, output_dim=4,
+            hidden_layers=model_cfg["hidden_layers"],
+            hidden_neurons=model_cfg["hidden_neurons"],
+            activation=model_cfg["activation"],
         )
 
         residual_last_layer = self.residual_dynamics_network[-1]
-        # nn.init.zeros_(residual_last_layer.weight)
-        # nn.init.zeros_(residual_last_layer.bias)
+        nn.init.zeros_(residual_last_layer.weight)
+        nn.init.zeros_(residual_last_layer.bias)
 
         # Stats for residual net inputs [q, qdot, tau]. Nominal still uses physical z.
         self.register_buffer("residual_input_mean", torch.zeros(6, dtype=torch.float64))
         self.register_buffer("residual_input_std", torch.ones(6, dtype=torch.float64))
 
-        self.nominal_only = nominal_only
-        self.perfect_nominal = perfect_nominal
+        self.nominal_only = model_cfg.get("nominal_only", False)
+        self.perfect_nominal = model_cfg.get("perfect_nominal", False)
 
     def set_residual_input_stats(self, mean, std, eps=1e-8):
         mean = torch.as_tensor(mean, dtype=self.residual_input_mean.dtype, device=self.residual_input_mean.device)
@@ -57,8 +80,6 @@ class PlanarArmODEFunc(nn.Module):
 
     def compute_nominal(self, x, xdot, u):
         """
-        FAAAAAK: Should return dz/dt, NOT THE NEXT STATE
-
         => With "step_rk4", the model should learn nothing.
         => With "imperfect_dynamics_step", the model should learn gravity torque thingy similar to pinocchio's
         """
@@ -84,12 +105,8 @@ class PlanarArmODEFunc(nn.Module):
 
     def forward(self, t, z):
         """
-        FAAAAAK: Should return dz/dt, NOT THE NEXT STATE.
-
         NOTE: t is there due to torchdiffeq shizz. Not used.
         State Z (9x1) => [X, u] => [q1, q2, q3, qdot1, qdot2, qdot3, tau1, tau2, tau2]
-
-        TODO: Gradients flow is correct?
         """
         x, xdot, u = z[:, 0:2], z[:, 2:4], z[:, 4:]
 
@@ -99,6 +116,12 @@ class PlanarArmODEFunc(nn.Module):
             return nominal_dynamics
 
         residual_dynamics = self.residual_dynamics_network(self.normalize_residual_input(z))
+        # residual_dynamics = self.residual_dynamics_network(z)
+        # residual_dynamics = self.residual_dynamics_network(self.normalize_residual_input(z)[:, 0:4])
+        # residual_dynamics = self.residual_dynamics_network(z[:, 0:4])
+        zeros = torch.zeros(z.shape[0], 2, dtype=z.dtype, device=z.device)
+        residual_dynamics = torch.cat([residual_dynamics, zeros], dim=1)
+
         dynamics = nominal_dynamics + residual_dynamics
         return dynamics
 
@@ -109,19 +132,18 @@ class PlanarArmKnodeModel(nn.Module):
 
     TODO: Batching and all is a shit show right now
     """
-    def __init__(self, step_size=0.002, nominal_only=False, perfect_nominal=False):
+    def __init__(self, model_cfg):
         """
         nominal_only: Nominal can be perfect/imperfect -> This flag just removes the residual
         perfect_nominal: Perfect or Imperfect nominal model
         """
         super().__init__()
         self.robot = PlanarArm()
-        self.step_size = step_size
+        self.step_size = model_cfg.get("step_size", 0.002)
+        self.nominal_only = model_cfg.get("nominal_only", False)
+        self.perfect_nominal = model_cfg.get("perfect_nominal", False)
 
-        self.func = PlanarArmODEFunc(
-            robot=self.robot, step_size=step_size, 
-            nominal_only=nominal_only, perfect_nominal=perfect_nominal
-        )
+        self.func = PlanarArmODEFunc(robot=self.robot, model_cfg=model_cfg)
 
     def set_residual_input_stats(self, mean, std, eps=1e-8):
         """Fit residual-input z-score from train columns [q, qdot, tau]."""

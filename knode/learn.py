@@ -10,7 +10,7 @@ from utils.visualize_trajectory import plot_trajectory_comparison
 
 OUTPUT_DIR = "outputs"
 
-LOOKAHEAD = 20
+LOOKAHEAD = 2
 EPOCHS = 15000
 LR = 0.001
 
@@ -62,18 +62,14 @@ def train_model(model, data, test_data):
         if epoch % 50 == 0:
             print(f"Epoch {epoch}, Loss: {loss.item()}")
 
-        if epoch % 200 == 0:
+        if epoch % 150 == 0:
             save_model_checkpoint(model, epoch)
 
-            y_hat, loss = evaluate_model(model, test_data)
-            plot_trajectory_comparison(
-                y_hat,
-                test_data,
-                dt=0.002,
-                epoch=epoch,
-                max_steps=n_segments,
-                show=False,
-            )
+            y_hat_open_loop = evaluate_model(model, test_data, open_loop=True)
+            y_hat_steps = evaluate_model(model, test_data, open_loop=False)
+
+            plot_trajectory_comparison(y_hat_open_loop, test_data, dt=0.002, epoch=epoch, max_steps=2000, show=False)
+            # plot_trajectory_comparison(y_hat_steps, test_data, dt=0.002, epoch=epoch, max_steps=n_segments, show=False)
 
 
     # y_hat, loss = evaluate_model(model, test_data)

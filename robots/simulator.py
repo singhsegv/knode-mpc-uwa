@@ -214,7 +214,8 @@ class PlanarArm:
         return qdot, qdd
     
     def get_imperfect_dynamics(self, q, qdot, tau):
-        tau_eff = tau + self.gravity_forces(q)
+        # tau_eff = tau + self.gravity_forces(q)
+        tau_eff = tau + np.array([0.3, 0.3]) # fixed torque bias
         qdd = self.forward_dynamics(q, qdot, tau_eff)
         return qdot, qdd
 

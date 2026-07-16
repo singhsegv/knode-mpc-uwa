@@ -147,7 +147,7 @@ def plot_trajectory_comparison(
         ax = axes[0, i]
         ax.plot(time, q_true[:, i], "k-", label="ground truth", linewidth=1.5)
         ax.plot(time, q_pred[:, i], "r--", label="model rollout", linewidth=1.2)
-        ax.plot(time, q_sim[:, i], "r:", label="pinocchio sim (tau replay)", linewidth=1.2)
+        ax.plot(time, q_sim[:, i], "g:", label="pinocchio sim (tau replay)", linewidth=1.2)
         ax.set_ylabel(joint_labels[i])
         ax.grid(True, alpha=0.3)
         if i == 0:
@@ -158,7 +158,7 @@ def plot_trajectory_comparison(
         ax = axes[1, i]
         ax.plot(time, xy_true[:, i], "k-", label="ground truth", linewidth=1.5)
         ax.plot(time, xy_pred[:, i], "r--", label="model rollout", linewidth=1.2)
-        ax.plot(time, xy_sim[:, i], "r:", label="pinocchio sim (tau replay)", linewidth=1.2)
+        ax.plot(time, xy_sim[:, i], "g:", label="pinocchio sim (tau replay)", linewidth=1.2)
         ax.set_xlabel("time [s]")
         ax.set_ylabel(task_labels[i])
         ax.grid(True, alpha=0.3)
@@ -173,7 +173,7 @@ def plot_trajectory_comparison(
     xy_fig, xy_ax = plt.subplots(figsize=(6, 6))
     xy_ax.plot(xy_true[:, 0], xy_true[:, 1], "k-", label="ground truth", linewidth=1.5)
     xy_ax.plot(xy_pred[:, 0], xy_pred[:, 1], "r--", label="model rollout", linewidth=1.2)
-    xy_ax.plot(xy_sim[:, 0], xy_sim[:, 1], "r:", label="pinocchio sim (tau replay)", linewidth=1.2)
+    xy_ax.plot(xy_sim[:, 0], xy_sim[:, 1], "g:", label="pinocchio sim (tau replay)", linewidth=1.2)
     xy_ax.set_xlabel("x [m]")
     xy_ax.set_ylabel("y [m]")
     xy_ax.set_title("Task-space path")

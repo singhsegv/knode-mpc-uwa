@@ -42,14 +42,78 @@ def latest_checkpoint_epoch():
     return max(epochs) if epochs else None
 
 
-def generate_model():
-    pass
-
-
-def evaluate_model(model, test_data):
+def evaluate_model(model, test_data, open_loop=True):
     """
-    STEPS:
-    1. 
+    open_loop=True -> Full open loop rollout comparison.
+    open_loop=False -> Single step rollout comparison.
+    """
+    with torch.no_grad():
+        model.eval()
+
+        test_data = torch.tensor(test_data, dtype=DTYPE)
+        eval_labels = test_data[:, 1:] # Converting from (t, q, qdot, u) to (q, qdot, u)
+
+        dt = model.step_size
+        step_times = torch.tensor([0.0, dt], dtype=DTYPE)
+        N = eval_labels.shape[0]
+        
+        y_hat = torch.zeros(N, 6, dtype=DTYPE)
+        y_hat[0] = eval_labels[0]
+
+        current_state = eval_labels[0].unsqueeze(0) # (1, 6)
+        for t in range(1, N):
+            # TODO: Needs to be changed for multi step lookaheads comparisons
+            pred = model(current_state, step_times) # (2, 1, 6) ODE thingy for timesteps
+            predicted_state = pred[-1, 0].clone() # (6,)
+            predicted_state[4:6] = eval_labels[t, 4:6] # Model gives q, qdot; torque comes from dataset at time t
+            y_hat[t] = predicted_state
+
+            # NOTE: This is the only difference
+            if open_loop:
+                current_state = predicted_state.unsqueeze(0) 
+            else:
+                current_state = eval_labels[t].unsqueeze(0) 
+
+        if open_loop:
+            print(f"[TEST DATASET] Whole Trajectory Open-Loop")
+        else:
+            print(f"[TEST DATASET] Whole Trajectory Single-Steps")
+        
+        pred = y_hat[1:, 0:4]
+        gt = test_data[1:, 1:5]
+        err = pred - gt
+        
+        names = ["q1 [rad]", "q2 [rad]", "qdot1 [rad/s]", "qdot2 [rad/s]"]
+        mse_dim = (err ** 2).mean(dim=0)
+        mae_dim = err.abs().mean(dim=0)
+
+        # Relative to GT magnitude (avoid /0)
+        rmse_dim = mse_dim.sqrt()
+        gt_rms = (gt ** 2).mean(dim=0).sqrt().clamp_min(1e-12)
+        nrmse_dim = rmse_dim / gt_rms
+        nrmse_pct = 100.0 * (rmse_dim / gt_rms) # RMSE Error % in terms of the signal scale
+
+        print(f"Combined MSE (q+qdot): {mse_dim.mean().item():.6e}")
+        print(f"{'dim':<16} {'MAE':>12} {'RMSE':>12} {'MSE':>12} {'NRMSE (%age of signal)':>12}")
+
+        for i, name in enumerate(names):
+            print(
+                f"{name:<16} {mae_dim[i].item():12.6e} {rmse_dim[i].item():12.6e} "
+                f"{mse_dim[i].item():12.6e} {nrmse_pct[i].item():12.6e}"
+            )
+
+        # Grouped: angles vs velocities
+        # mse_q = mse_dim[:2].mean()
+        # mse_qd = mse_dim[2:].mean()
+        # print(f"MSE(q):    {mse_q.item():.6e}  [rad^2]")
+        # print(f"MSE(qdot): {mse_qd.item():.6e}  [(rad/s)^2]")
+    
+    return y_hat
+
+
+def OG_evaluate_model(model, test_data):
+    """
+    Kept for history. All the changes I did.
     """
     loss_fn = nn.MSELoss()
     robot = PlanarArm()

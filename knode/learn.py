@@ -5,8 +5,8 @@ from torch import nn
 
 from knode.model import PlanarArmKnodeModel
 from utils.data_utils import load_data
-from utils.model_utils import save_model_checkpoint, evaluate_model
-from utils.visualize_trajectory import plot_trajectory_comparison
+from utils.model_utils import save_model_checkpoint, evaluate_model, evaluate_horizon_loss
+from utils.visualize_trajectory import plot_trajectory_comparison, save_pinocchio_simulation_video, horizon_losses
 
 OUTPUT_DIR = "outputs"
 
@@ -45,14 +45,17 @@ def train_model(model, data, test_data):
         model.train()
         optimizer.zero_grad()
 
-        # odeint returns (T, batch, 3); view(-1, 3) is time-major: all batch@t0, then all batch@t1.
-        # stack(dim=1) on (2, 3) windows gives (T, batch, 3) — same layout as y_hat.
-        # cat(dim=0) would be segment-major and pair the wrong rows in MSE.
+        # Old Shizz
+        # y_hat = model(training_x, training_timesteps).view(-1, 6)[:, :4]
+        # labels = torch.stack(training_labels, dim=1).reshape(-1, 6)[:, :4]
 
-        # NOTE: No torques in loss 
-        y_hat = model(training_x, training_timesteps).view(-1, 6)[:, :4]
-        labels = torch.stack(training_labels, dim=1).reshape(-1, 6)[:, :4]
+        # odeint returns (T, batch, 6). Drop t=0 (IC copy); loss only on predicted steps.
+        # stack(dim=1) on windows gives (T, batch, 6) — same layout as y_hat.
 
+        # NOTE: No torques in loss
+        y_hat = model(training_x, training_timesteps)[1:].reshape(-1, 6)[:, :4]
+        labels = torch.stack(training_labels, dim=1)[1:].reshape(-1, 6)[:, :4]
+        
         loss = loss_fn(y_hat, labels)
         loss_arr.append(loss.item())
         
@@ -66,19 +69,22 @@ def train_model(model, data, test_data):
             save_model_checkpoint(model, epoch)
 
             y_hat_open_loop = evaluate_model(model, test_data, open_loop=True)
-            y_hat_steps = evaluate_model(model, test_data, open_loop=False)
+            y_hat_stepwise = evaluate_model(model, test_data, open_loop=False)
 
-            plot_trajectory_comparison(y_hat_open_loop, test_data, dt=0.002, epoch=epoch, max_steps=2000, show=False)
-            # plot_trajectory_comparison(y_hat_steps, test_data, dt=0.002, epoch=epoch, max_steps=n_segments, show=False)
+            # For plotting purposes: Same shape (t, q, qdot, u) and numpy type
+            t_col = torch.as_tensor(test_data[:, :1], dtype=y_hat_open_loop.dtype)
 
+            y_hat_open_loop = torch.cat([t_col, y_hat_open_loop], dim=1).detach().numpy()
+            y_hat_stepwise = torch.cat([t_col, y_hat_stepwise], dim=1).detach().numpy()
 
-    # y_hat, loss = evaluate_model(model, test_data)
-    # plot_trajectory_comparison(
-    #     y_hat,
-    #     test_data,
-    #     dt=0.002,
-    #     epoch=2,
-    #     max_steps=10000,
-    #     show=False,
-    # )
+            test_data_steps = len(test_data)
+            plot_trajectory_comparison(y_hat_open_loop, test_data, dt=model.step_size, label=f"{epoch}_openloop", max_steps=test_data_steps, show=False)
+            plot_trajectory_comparison(y_hat_stepwise, test_data, dt=model.step_size, label=f"{epoch}_stepwise", max_steps=test_data_steps, show=False)
+
+            # TODO: FIX US -> Not feasible using this
+            # video_path = save_pinocchio_simulation_video(y_hat_open_loop, dt=model.step_size, fps=500, max_steps=test_data_steps, label=f"{epoch}_openloop")
+            # video_path = save_pinocchio_simulation_video(y_hat_stepwise, dt=model.step_size, fps=30, max_steps=test_data_steps, label=f"{epoch}_stepwise")
+
+            losses = evaluate_horizon_loss(model, test_data, [1, 5, 10, 25, 50, 100, 250, 500, 1000, 2000])
+            horizon_losses(losses, label=f"{epoch}")
 

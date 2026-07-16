@@ -111,6 +111,65 @@ def evaluate_model(model, test_data, open_loop=True):
     return y_hat
 
 
+def evaluate_horizon_loss(model, test_data, horizon):
+    """
+    Open loop losses: Horizon vs Loss
+    horizon (steps): list of step indices to report MSE over [1..h]
+
+    Returns dict {h: {"total", "q1", "q2", "qdot1", "qdot2"}} of MSE values.
+    """
+    if horizon is None:
+        horizon = [1, 50, 100]
+
+    with torch.no_grad():
+        loss_fn = nn.MSELoss()
+        model.eval()
+
+        test_data = torch.tensor(test_data, dtype=DTYPE)
+
+        # Converting from (t, q, qdot, u) to (q, qdot, u)
+        eval_labels = test_data[:, 1:]
+
+        dt = model.step_size
+        step_times = torch.tensor([0.0, dt], dtype=DTYPE)
+        N = eval_labels.shape[0]
+        
+        y_hat = torch.zeros(N, 6, dtype=DTYPE)
+        y_hat[0] = eval_labels[0]
+
+        current_state = eval_labels[0].unsqueeze(0) # (1, 6)
+        for t in range(1, N):
+            pred = model(current_state, step_times) # (2, 1, 6) ODE thingy for timesteps
+            predicted_state = pred[-1, 0].clone() # (6,)
+            predicted_state[4:6] = eval_labels[t, 4:6] # Model gives q, qdot; torque comes from dataset at time t
+            y_hat[t] = predicted_state
+            current_state = predicted_state.unsqueeze(0) # For the next iteration
+
+        # Open-loop MSE for each requested horizon (steps 1..h inclusive)
+        dim_names = ["q1", "q2", "qdot1", "qdot2"]
+        losses = {}
+        for h in horizon:
+            h = int(h)
+            if h < 1 or h >= N:
+                raise ValueError(f"horizon step {h} out of range for trajectory length N={N}")
+
+            pred = y_hat[1:h + 1, 0:4]
+            gt = test_data[1:h + 1, 1:5]
+            mse_dim = ((pred - gt) ** 2).mean(dim=0)
+
+            loss_h = {
+                "total": loss_fn(pred, gt),
+                "q1": mse_dim[0],
+                "q2": mse_dim[1],
+                "qdot1": mse_dim[2],
+                "qdot2": mse_dim[3],
+            }
+
+            losses[h] = loss_h
+    
+    return losses
+
+
 def OG_evaluate_model(model, test_data):
     """
     Kept for history. All the changes I did.

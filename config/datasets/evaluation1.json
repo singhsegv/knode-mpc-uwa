@@ -4,7 +4,7 @@
     "train_trajectories": [
         {
             "type": "circle",
-            "duration": 20.0,
+            "duration": 15.0,
             "omega": 0.5,
             "cx": -0.3,
             "cy": 1.2,

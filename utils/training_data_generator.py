@@ -13,6 +13,8 @@ from scipy.optimize import fsolve
 from robots.simulator import PlanarArm
 from utils.trajectory_generator import circle_trajectory, lemniscate_trajectory, line_trajectory
 
+# Common thingy for all functions
+robot = PlanarArm(enable_viz=False)
 
 DOF = 2
 DT = 0.002  # 500 Hz
@@ -28,15 +30,7 @@ DEFAULT_OUTPUT_DIR = os.path.join(PROJECT_ROOT, "data")
 PLOT_OUTPUT_DIR = os.path.join(PROJECT_ROOT, "outputs")
 
 
-def plot_collected_trajectory(
-    t_log,
-    q_log,
-    robot,
-    trajectory=None,
-    max_steps=None,
-    output_dir=PLOT_OUTPUT_DIR,
-    show=False,
-):
+def plot_collected_trajectory(t_log, q_log, trajectory=None, max_steps=None, output_dir=PLOT_OUTPUT_DIR, show=False):
     """
     Plot collected rollout in joint and task space.
 
@@ -122,8 +116,6 @@ def collect(duration, trajectory, cx, cy, omega, a=None, r=None, lx0=None, ly0=N
     Lemniscate: cx, cy, a
     Line: lx0, ly0, lx1, ly1
     """
-    robot = PlanarArm(enable_viz=enable_viz)
-
     n_steps = int(duration / DT)
     t_log = np.empty(n_steps)
     q_log = np.empty((n_steps, DOF))
@@ -199,13 +191,6 @@ def collect(duration, trajectory, cx, cy, omega, a=None, r=None, lx0=None, ly0=N
         # q, qdot = robot.step_rk4(q, qdot, tau, DT)
         q, qdot = robot.step_torchdiffeq(q, qdot, tau, DT)
 
-    plot_collected_trajectory(
-        t_log, q_log, robot,
-        trajectory=trajectory,
-        max_steps=10000,
-        show=False,
-    )
-
     return {
         "t": t_log,
         "q": q_log,
@@ -218,6 +203,7 @@ def collect(duration, trajectory, cx, cy, omega, a=None, r=None, lx0=None, ly0=N
         "meta": {
             "trajectory": trajectory,
             "duration": duration,
+            "n_steps": n_steps,
             "r": r,
             "a": a,
             "cx": cx,

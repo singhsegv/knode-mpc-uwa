@@ -17,7 +17,7 @@ from knode.learn import train_model
 from knode.model import PlanarArmKnodeModel
 from utils.data_utils import load_data
 from utils.log_utils import Tee
-from utils.training_data_generator import collect_from_spec, save_log
+from utils.training_data_generator import collect_from_spec, save_log, plot_collected_trajectory
 import knode.learn as learn
 import utils.model_utils as model_utils
 import utils.visualize_trajectory as visualize_trajectory
@@ -48,8 +48,16 @@ def _generate_split(specs, split_dir):
     os.makedirs(split_dir, exist_ok=True)
     for i, spec in enumerate(specs):
         output_path = os.path.join(split_dir, f"{i:02d}_{spec['type']}.npz")
-        log = collect_from_spec(spec, enable_viz=False)
+        log = collect_from_spec(spec, enable_viz=False) 
         save_log(output_path, log)
+
+        plot_collected_trajectory(
+            t_log=log["t"], q_log=log["q"],
+            trajectory=log["meta"]["trajectory"],
+            max_steps=log["meta"]["n_steps"], show=False,
+            output_dir=os.path.dirname(output_path)
+        )
+
         print(f"Saved {len(log['t'])} samples -> {output_path}")
 
 
@@ -69,9 +77,11 @@ def ensure_dataset(dataset_cfg, data_dir):
         _generate_split(dataset_cfg["test_trajectories"], test_dir)
 
 
-def make_run_dir(dataset_name, model_name):
+def make_run_dir(dataset_name, model_name, experiment_name=None):
     stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     run_name = f"{stamp}_{dataset_name}_{model_name}"
+    if experiment_name:
+        run_name = f"{run_name}_{experiment_name}"
     run_dir = os.path.join(RUNS_DIR, run_name)
     os.makedirs(os.path.join(run_dir, "checkpoints"), exist_ok=True)
     os.makedirs(os.path.join(run_dir, "outputs"), exist_ok=True)
@@ -82,6 +92,7 @@ def main():
     parser = argparse.ArgumentParser(description="Run a KNODE training experiment from JSON configs.")
     parser.add_argument("--dataset", type=str, required=True, help="Dataset config name under config/datasets/ (without .json)")
     parser.add_argument("--model", type=str, required=True, help="Model config name under config/models/ (without .json)")
+    parser.add_argument("--name", type=str, default=None, help="Optional custom experiment name appended to the run directory")
     parser.add_argument("--lookahead", type=int, default=2, help="Override lookahead for NODE (default: 2)")
     parser.add_argument("--epochs", type=int, default=15000, help="Override training epochs (default: 15k)")
     parser.add_argument("--lr", type=float, default=0.001, help="Override learning rate")
@@ -94,7 +105,7 @@ def main():
     data_dir = os.path.join(DATA_DIR, data_name)
     ensure_dataset(dataset_cfg, data_dir)
 
-    run_dir = make_run_dir(args.dataset, args.model)
+    run_dir = make_run_dir(args.dataset, args.model, args.name)
     shutil.copy2(dataset_cfg_path, os.path.join(run_dir, "dataset.json"))
     shutil.copy2(model_cfg_path, os.path.join(run_dir, "model.json"))
     print(f"Run directory: {run_dir}")

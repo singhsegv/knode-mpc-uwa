@@ -3,12 +3,19 @@ Similar to data_generator.py but reads from json.
 """
 import json
 import os
+import sys
 import time
 import argparse
 
 import matplotlib.pyplot as plt
 import numpy as np
 from scipy.optimize import fsolve
+
+SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
+PROJECT_ROOT = os.path.dirname(SCRIPT_DIR)
+
+if PROJECT_ROOT not in sys.path:
+    sys.path.insert(0, PROJECT_ROOT)
 
 from robots.simulator import PlanarArm
 from utils.trajectory_generator import circle_trajectory, lemniscate_trajectory, line_trajectory
@@ -18,14 +25,11 @@ robot = PlanarArm(enable_viz=False)
 
 DOF = 2
 DT = 0.002  # 500 Hz
-# DT = 0.01  # 100 Hz
 Kp = np.array([50.0, 50.0])
 Kd = np.array([4.0, 4.0])
 
-SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
-PROJECT_ROOT = os.path.dirname(SCRIPT_DIR)
 DATASETS_DIR = os.path.join(PROJECT_ROOT, "config", "datasets")
-DEFAULT_CONFIG_NAME = "demo1"
+DEFAULT_CONFIG_NAME = "standalone"
 DEFAULT_OUTPUT_DIR = os.path.join(PROJECT_ROOT, "data")
 PLOT_OUTPUT_DIR = os.path.join(PROJECT_ROOT, "outputs")
 
@@ -136,10 +140,9 @@ def collect(duration, trajectory, cx, cy, omega, a=None, r=None, lx0=None, ly0=N
     robot.move_to(q_initial)
     q = q_initial.copy()
 
-    # robot.display(q)
-
-    # if enable_viz:
-    #     time.sleep(2)
+    if enable_viz:
+        robot.display(q)
+        time.sleep(2)
 
     qdot = np.zeros(DOF)
     q_prev = q.copy() # Just as a seed for the solver
@@ -185,7 +188,8 @@ def collect(duration, trajectory, cx, cy, omega, a=None, r=None, lx0=None, ly0=N
         qdot_log[i] = qdot.copy()
         tau_log[i] = tau.copy()
 
-        # robot.display(q)
+        if enable_viz:
+            robot.display(q)
 
         # These get saved in the next iteration
         # q, qdot = robot.step_rk4(q, qdot, tau, DT)
@@ -259,23 +263,30 @@ def main():
     parser.add_argument("--config", type=str, default=DEFAULT_CONFIG_NAME, help="JSON filename under configurations/datasets/")
     parser.add_argument("--output-dir", type=str, default=None, help="Directory for .npz files (default: data/<config name>/)",)
     parser.add_argument("--viz", action="store_true", help="Enable Meshcat visualization")
+    parser.add_argument("--name", type=str, help="Custom name override")
     args = parser.parse_args()
 
     config_path = os.path.join(DATASETS_DIR, f"{args.config}.json")
     with open(config_path) as f:
         config = json.load(f)
 
-    combo_name = config["name"]
+    if args.name:
+        combo_name = args.name
+    else:
+        combo_name = config["name"]
+
     output_dir = args.output_dir or os.path.join(DEFAULT_OUTPUT_DIR, combo_name)
 
-    for split in ("train", "test"):
-        specs = config[f"{split}_trajectories"]
-        split_dir = os.path.join(output_dir, split)
-        for i, spec in enumerate(specs):
-            output_path = os.path.join(split_dir, f"{i:02d}_{spec['type']}.npz")
-            log = collect_from_spec(spec, enable_viz=args.viz)
-            save_log(output_path, log)
-            print(f"Saved {len(log['t'])} samples at {1.0 / DT:.0f} Hz -> {output_path}")
+    if args.viz:
+        robot.enable_visualization()
+
+    # Only creates the training trajectories
+    specs = config[f"train_trajectories"]
+    for i, spec in enumerate(specs):
+        output_path = os.path.join(output_dir, f"{i:02d}_{spec['type']}.npz")
+        log = collect_from_spec(spec, enable_viz=args.viz)
+        save_log(output_path, log)
+        print(f"Saved {len(log['t'])} samples at {1.0 / DT:.0f} Hz -> {output_path}")
 
 
 if __name__ == "__main__":

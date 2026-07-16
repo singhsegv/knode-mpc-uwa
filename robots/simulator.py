@@ -223,3 +223,8 @@ class PlanarArm:
         if self.viz is not None:
             self.viz.display(q)
 
+    def enable_visualization(self):
+        """ Manually enabling visuazation """
+        self.viz = MeshcatVisualizer(self.model, self.collision_model, self.visual_model)
+        self.viz.initViewer(open=True)
+        self.viz.loadViewerModel()

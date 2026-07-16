@@ -5,6 +5,7 @@ import json
 import os
 import sys
 import time
+import torch
 import argparse
 
 import matplotlib.pyplot as plt
@@ -18,6 +19,9 @@ if PROJECT_ROOT not in sys.path:
     sys.path.insert(0, PROJECT_ROOT)
 
 from robots.simulator import PlanarArm
+from knode.model import PlanarArmKnodeModel
+import utils.model_utils as model_utils
+from utils.model_utils import latest_checkpoint_epoch, load_model_checkpoint
 from utils.trajectory_generator import circle_trajectory, lemniscate_trajectory, line_trajectory
 
 # Common thingy for all functions
@@ -113,7 +117,19 @@ def ik_residual(q_seed, x_des, y_des):
     return x - x_des, y - y_des
 
 
-def collect(duration, trajectory, cx, cy, omega, a=None, r=None, lx0=None, ly0=None, lx1=None, ly1=None, enable_viz=False):
+def step_with_knode(model, q, qdot, tau, dt):
+    """One RK4 step of PlanarArmKnodeModel: (q, qdot, tau) -> (q_next, qdot_next)."""
+    model.eval()
+    with torch.no_grad():
+        y0 = torch.tensor(np.concatenate([q, qdot, tau], axis=0)[None, :], dtype=torch.float64)
+        timesteps = torch.tensor([0.0, dt], dtype=torch.float64)
+        pred = model(y0, timesteps)  # (2, 1, 6)
+        nxt = pred[-1, 0].detach().cpu().numpy()
+        
+    return nxt[:2].copy(), nxt[2:4].copy()
+
+
+def collect(duration, trajectory, cx, cy, omega, a=None, r=None, lx0=None, ly0=None, lx1=None, ly1=None, enable_viz=False, knode_model=None):
     """
     Common: omega, duration
     Circle: cx, cy, r
@@ -193,7 +209,10 @@ def collect(duration, trajectory, cx, cy, omega, a=None, r=None, lx0=None, ly0=N
 
         # These get saved in the next iteration
         # q, qdot = robot.step_rk4(q, qdot, tau, DT)
-        q, qdot = robot.step_torchdiffeq(q, qdot, tau, DT)
+        if knode_model is not None:
+            q, qdot = step_with_knode(knode_model, q, qdot, tau, DT)
+        else:
+            q, qdot = robot.step_torchdiffeq(q, qdot, tau, DT)
 
     return {
         "t": t_log,
@@ -221,7 +240,7 @@ def collect(duration, trajectory, cx, cy, omega, a=None, r=None, lx0=None, ly0=N
     }
 
 
-def collect_from_spec(spec, enable_viz=False):
+def collect_from_spec(spec, enable_viz=False, knode_model=None):
     trajectory = spec["type"]
     duration = spec.get("duration", -1)
     omega = spec.get("omega", -1)
@@ -239,6 +258,7 @@ def collect_from_spec(spec, enable_viz=False):
         lx1=spec.get("lx1"),
         ly1=spec.get("ly1"),
         enable_viz=enable_viz,
+        knode_model=knode_model,
     )
 
 
@@ -264,6 +284,8 @@ def main():
     parser.add_argument("--output-dir", type=str, default=None, help="Directory for .npz files (default: data/<config name>/)",)
     parser.add_argument("--viz", action="store_true", help="Enable Meshcat visualization")
     parser.add_argument("--name", type=str, help="Custom name override")
+    parser.add_argument("--custom-dynamics", action="store_true", help="Enable custom NN for forward integration")
+    
     args = parser.parse_args()
 
     config_path = os.path.join(DATASETS_DIR, f"{args.config}.json")
@@ -280,11 +302,27 @@ def main():
     if args.viz:
         robot.enable_visualization()
 
+    model = None
+
+    # Only for Standalone script
+    if args.custom_dynamics:
+        model_cfg = {"step_size": DT, "nominal_only": False, "perfect_nominal": False, "hidden_layers": 2,  "hidden_neurons": 128, "activation": "tanh"}
+        model = PlanarArmKnodeModel(model_cfg).to(torch.float64)
+        run_dir = "/Users/singhsegv/upenn-research-scalar/implementations/learning-manipulator-dynamics/knode-mpc-planar-arm/runs/20260715_213721_evaluation1_basic1"
+        model_utils.CHECKPOINT_DIR = os.path.join(run_dir, "checkpoints")
+        epoch = latest_checkpoint_epoch()
+
+        if epoch is None:
+            raise FileNotFoundError(f"No checkpoints found under {os.path.join(SCRIPT_DIR, 'checkpoints')}")
+
+        load_model_checkpoint(model, epoch)
+        print(f"Loaded KNODE checkpoint epoch {epoch}")
+
     # Only creates the training trajectories
     specs = config[f"train_trajectories"]
     for i, spec in enumerate(specs):
         output_path = os.path.join(output_dir, f"{i:02d}_{spec['type']}.npz")
-        log = collect_from_spec(spec, enable_viz=args.viz)
+        log = collect_from_spec(spec, enable_viz=args.viz, knode_model=model)
         save_log(output_path, log)
         print(f"Saved {len(log['t'])} samples at {1.0 / DT:.0f} Hz -> {output_path}")
 

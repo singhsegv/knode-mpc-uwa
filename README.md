@@ -5,6 +5,11 @@
 python run_experiment.py --dataset evaluation1 --model basic1
 
 # optional: --epochs 500 --lr 0.001
+
+python run_experiment.py --dataset evaluation1 --model basic1 --name testing
+
+# Dataset Generation
+python utils/training_data_generator.py --viz --custom-dynamics
 ```
 
 

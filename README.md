@@ -10,6 +10,9 @@ python run_experiment.py --dataset evaluation1 --model basic1 --name testing
 
 # Dataset Generation
 python utils/training_data_generator.py --viz --custom-dynamics
+
+# Comparing rollouts: EE positions and Tau
+python utils/compare_collected_rollouts.py data/standalone data/other_run --save
 ```
 
 

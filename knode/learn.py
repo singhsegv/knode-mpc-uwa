@@ -14,12 +14,18 @@ LOOKAHEAD = 2
 EPOCHS = 15000
 LR = 0.001
 
+OG_UNTRAINED_MODEL = None
+
 
 def train_model(model, data, test_data):
     """
     Sensibly update every hyperparam
     TODO: Dynamics lookahead that is useful enough shit for MPC
     """
+    global OG_UNTRAINED_MODEL
+    model_cfg = {"step_size": model.step_size, "nominal_only": True, "perfect_nominal": False, "hidden_layers": 2,  "hidden_neurons": 128, "activation": "tanh"}
+    OG_UNTRAINED_MODEL = PlanarArmKnodeModel(model_cfg).to(torch.float64)
+
     loss_fn = nn.MSELoss()
     optimizer = torch.optim.Adam(model.parameters(), lr=LR)
 
@@ -85,6 +91,9 @@ def train_model(model, data, test_data):
             # video_path = save_pinocchio_simulation_video(y_hat_open_loop, dt=model.step_size, fps=500, max_steps=test_data_steps, label=f"{epoch}_openloop")
             # video_path = save_pinocchio_simulation_video(y_hat_stepwise, dt=model.step_size, fps=30, max_steps=test_data_steps, label=f"{epoch}_stepwise")
 
-            losses = evaluate_horizon_loss(model, test_data, [1, 5, 10, 25, 50, 100, 250, 500, 1000, 2000])
+            losses = evaluate_horizon_loss(model, test_data, [1, 5, 10, 25, 50, 100, 250, 500])
             horizon_losses(losses, label=f"{epoch}")
+
+            OG_losses = evaluate_horizon_loss(OG_UNTRAINED_MODEL, test_data, [1, 5, 10, 25, 50, 100, 250, 500])
+            horizon_losses(OG_losses, label=f"{epoch}_OG")
 

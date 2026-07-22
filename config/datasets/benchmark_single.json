@@ -1,0 +1,14 @@
+{
+    "name": "benchmark_single",
+    "description": "Benchmark suite: circles and lemniscates across centers, radii/scales, and omegas, with a few lines. Fixed duration=20s.",
+    "train_trajectories": [
+        {
+            "type": "circle",
+            "duration": 15.0,
+            "omega": 1.0,
+            "cx": -0.4,
+            "cy": 1.4,
+            "r": 0.02
+        }
+    ]
+}

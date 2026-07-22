@@ -186,6 +186,71 @@ def horizon_losses(losses, label=None, output_dir=None, show=False):
     return fig, save_path
 
 
+def horizon_losses_comparison(losses_left, losses_right, label=None, output_dir=None,
+                              titles=("KNODE", "OG"), show=False):
+    """
+    Side-by-side open-loop MSE vs horizon panels (e.g. KNODE | OG).
+
+    Each losses_* dict: {horizon_steps: {"total","q1","q2","qdot1","qdot2"}}
+    """
+    if output_dir is None:
+        output_dir = DEFAULT_OUTPUT_DIR
+
+    keys = ["total", "q1", "q2", "qdot1", "qdot2"]
+    styles = {
+        "total": ("k-o", 2.0),
+        "q1": ("C0--s", 1.3),
+        "q2": ("C1--s", 1.3),
+        "qdot1": ("C2:^", 1.3),
+        "qdot2": ("C3:^", 1.3),
+    }
+
+    def _series(losses):
+        horizons = sorted(losses.keys())
+        series = {k: [] for k in keys}
+        for h in horizons:
+            entry = losses[h]
+            for k in keys:
+                v = entry[k]
+                if isinstance(v, torch.Tensor):
+                    v = v.detach().cpu().item()
+                series[k].append(float(v))
+        return horizons, series
+
+    panels = [(losses_left, titles[0])]
+    if losses_right is not None:
+        panels.append((losses_right, titles[1]))
+
+    n = len(panels)
+    fig, axes = plt.subplots(1, n, figsize=(8 * n, 4.5), sharey=False)
+    if n == 1:
+        axes = [axes]
+
+    for ax, (losses, title) in zip(axes, panels):
+        horizons, series = _series(losses)
+        for k in keys:
+            fmt, lw = styles[k]
+            ax.plot(horizons, series[k], fmt, linewidth=lw, markersize=5, label=k)
+        ax.set_xlabel("horizon [steps]")
+        ax.set_ylabel("open-loop MSE")
+        ax.set_title(title)
+        ax.grid(True, alpha=0.3)
+        ax.legend(loc="best", fontsize=8)
+
+    fig.tight_layout()
+    os.makedirs(output_dir, exist_ok=True)
+    suffix = f"_epoch_{label}" if label is not None else ""
+    save_path = os.path.join(output_dir, f"horizon_losses_comparison{suffix}.png")
+    fig.savefig(save_path, dpi=150)
+
+    if show:
+        plt.show()
+    else:
+        plt.close(fig)
+
+    return fig, save_path
+
+
 def save_pinocchio_simulation_video(states, dt=0.002, fps=60, max_steps=None, output_dir=None, label=None):
     """
     Offline render of a Pinocchio rollout to mp4 using Panda3d.

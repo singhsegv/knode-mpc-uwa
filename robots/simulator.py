@@ -76,7 +76,7 @@ class PlanarArm:
         ee = np.array(self.data.oMf[self.ee_frame_id].translation[:2])
         return base, elbow, ee
 
-    def simulate_rollout(self, q0, qdot0, taus, dt):
+    def simulate_rollout(self, q0, qdot0, taus, dt, use_torchdiffeq=True):
         """
         Pinocchio RK4 rollout using a sequence of torques.
         Returns (N, 2) q and (N, 2) qdot logs (pre-step convention, same as data_generator).
@@ -89,8 +89,11 @@ class PlanarArm:
         for i in range(n):
             q_log[i] = q
             qdot_log[i] = qdot
-            # q, qdot = self.step_rk4(q, qdot, taus[i], dt)
-            q, qdot = self.step_torchdiffeq(q, qdot, taus[i], dt)
+            
+            if use_torchdiffeq:
+                q, qdot = self.step_torchdiffeq(q, qdot, taus[i], dt)
+            else:
+                q, qdot = self.step_rk4(q, qdot, taus[i], dt)
 
         return q_log, qdot_log
 

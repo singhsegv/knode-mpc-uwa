@@ -13,6 +13,10 @@ python utils/training_data_generator.py --viz --custom-dynamics
 
 # Comparing rollouts: EE positions and Tau
 python utils/compare_collected_rollouts.py data/standalone data/other_run --save
+
+# Performance and Generalization [Standalone]
+python evaluate/benchmark_model.py --run 20260717_171819_evaluation1_basic1_comparison-la-100
+python evaluate/benchmark_model.py --run <run_name> --epoch 2100 --dataset benchmark_basic --plot
 ```
 
 

@@ -6,14 +6,23 @@ Goal:
 2. To test if the KNODE model has learnt the residual or not.
 """
 import os
+import sys
+import argparse
+import json
+
+SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
+PROJECT_ROOT = os.path.dirname(SCRIPT_DIR)
+
+if PROJECT_ROOT not in sys.path:
+    sys.path.insert(0, PROJECT_ROOT)
 
 import matplotlib.pyplot as plt
 import numpy as np
 import torch
 from scipy.optimize import fsolve
 
-from model import PlanarArmKnodeModel
-from robot import PlanarArm
+from knode.model import PlanarArmKnodeModel
+from robots.simulator import PlanarArm
 from utils.data_utils import load_evaluation_data
 from utils.model_utils import latest_checkpoint_epoch, load_model_checkpoint
 
@@ -43,27 +52,6 @@ def step_with_knode(model, q, qdot, tau, dt):
         nxt = pred[-1, 0].detach().cpu().numpy()
         
     return nxt[:2].copy(), nxt[2:4].copy()
-
-
-def plot_evaluation_trajectories(dynamics_model):
-    """
-    dynamics_model: {Pinocchio Model / KNODE}
-
-    Compare:
-    1. Ground Truth: Desired EE positions in the Task Space
-    2. Ground Truth: Desired EE positions in the Task Space
-    """
-    # Desired task-space EE position
-
-    # Real task-space EE position [Dynamics from the Model]
-    pass
-
-
-def plot_evaluation_simulations():
-    """
-    Simulation video for sanity checks
-    """
-    pass
 
 
 def evaluate_shit(data_path, knode_model=None):
@@ -127,10 +115,14 @@ def evaluate_shit(data_path, knode_model=None):
     return results
 
 
-if __name__ == "__main__":
-    data_dir = "/Users/singhsegv/upenn-research-scalar/implementations/learning-manipulator-dynamics/knode-mpc-planar-arm/data/evaluation1/"
+def main():
+    pass
 
-    model = PlanarArmKnodeModel(step_size=DT, nominal_only=False, perfect_nominal=True).to(torch.float64)
+
+if __name__ == "__main__":
+    data_dir = "/Users/singhsegv/upenn-research-scalar/implementations/learning-manipulator-dynamics/knode-mpc-planar-arm/data/benchmark_basic"
+    model_cfg = {"step_size": DT, "nominal_only": False, "perfect_nominal": False, "hidden_layers": 2,  "hidden_neurons": 128, "activation": "tanh"}
+    model = PlanarArmKnodeModel(model_cfg).to(torch.float64)
 
     epoch = latest_checkpoint_epoch()
     if epoch is None:

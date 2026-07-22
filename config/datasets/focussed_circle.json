@@ -1,0 +1,80 @@
+{
+    "name": "focussed_circle",
+    "description": "Goal is to learn the basic AF circle trajectory",
+    "train_trajectories": [
+        {
+            "type": "circle",
+            "duration": 10.0,
+            "omega": 1.0,
+            "cx": -0.4,
+            "cy": 1.4,
+            "r": 0.05
+        },
+        {
+            "type": "circle",
+            "duration": 10.0,
+            "omega": 1.0,
+            "cx": -0.4,
+            "cy": 1.4,
+            "r": 0.075
+        },
+        {
+            "type": "circle",
+            "duration": 10.0,
+            "omega": 1.0,
+            "cx": -0.4,
+            "cy": 1.4,
+            "r": 0.1
+        },
+        {
+            "type": "circle",
+            "duration": 10.0,
+            "omega": 1.0,
+            "cx": -0.4,
+            "cy": 1.4,
+            "r": 0.125
+        },
+        {
+            "type": "circle",
+            "duration": 10.0,
+            "omega": 1.0,
+            "cx": -0.4,
+            "cy": 1.4,
+            "r": 0.150
+        },
+        {
+            "type": "circle",
+            "duration": 10.0,
+            "omega": 1.0,
+            "cx": -0.4,
+            "cy": 1.4,
+            "r": 0.2
+        },
+        {
+            "type": "circle",
+            "duration": 10.0,
+            "omega": 1.0,
+            "cx": -0.4,
+            "cy": 1.4,
+            "r": 0.25
+        },
+        {
+            "type": "circle",
+            "duration": 10.0,
+            "omega": 1.0,
+            "cx": -0.4,
+            "cy": 1.4,
+            "r": 0.3
+        }
+    ],
+    "test_trajectories": [
+        {
+            "type": "circle",
+            "duration": 20.0,
+            "omega": 1.0,
+            "cx": -0.4,
+            "cy": 1.4,
+            "r": 0.025
+        }
+    ]
+}

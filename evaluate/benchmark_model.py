@@ -172,6 +172,21 @@ def visualize_robot_simulation(model, trajectory):
         q, qdot = step_with_knode(model, q, qdot, tau, DT)
         robot.display(q)
 
+    # t0 = time.perf_counter()
+    # for i in range(1, n_steps):
+    #     step_start = time.perf_counter()
+    #     tau = trajectory[i, 5:]
+    #     q, qdot = step_with_knode(model, q, qdot, tau, DT)
+    #     robot.display(q)
+    #     # Wait until wall-clock time catches up to i * DT
+    #     target = t0 + i * DT
+    #     now = time.perf_counter()
+    #     if now < target:
+    #         time.sleep(target - now)
+
+    # elapsed = time.perf_counter() - step_start
+    # time.sleep(max(0.0, DT - elapsed))
+
 
 def main():
     parser = argparse.ArgumentParser(description="Benchmark a trained KNODE run across multiple trajectories (horizon vs open-loop MSE).")

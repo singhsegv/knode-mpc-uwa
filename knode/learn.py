@@ -1,5 +1,6 @@
 import os
 
+import numpy as np
 import torch
 from torch import nn
 
@@ -17,11 +18,39 @@ LR = 0.001
 OG_UNTRAINED_MODEL = None
 
 
-def train_model(model, data, test_data):
+def build_lookahead_windows(trajectories, lookahead):
+    """
+    One sliding window per valid start index, never crossing trajectory boundaries.
+    Returns training_x (batch, 6) and training_labels list of (lookahead, 6) tensors.
+    """
+    training_labels = []
+    ic_rows = [] # Combining all the shizz
+
+    for traj in trajectories:
+        states = traj[:, 1:]  # drop time -> (q, qdot, tau)
+        n = len(traj)
+        for i in range(n - lookahead + 1):
+            ic_rows.append(states[i])
+            training_labels.append(torch.tensor(states[i:i + lookahead], dtype=torch.float64))
+
+    training_x = torch.tensor(np.stack(ic_rows), dtype=torch.float64)
+
+    assert training_x.shape[0] == len(training_labels)
+    return training_x, training_labels
+
+
+def train_model(model, train_data, test_data):
     """
     Sensibly update every hyperparam
     TODO: Dynamics lookahead that is useful enough shit for MPC
+
+    -------
+    params:
+
+    train_data: list/tuple of numpy arrays
+    -------
     """
+    # Only for the purpose of evaluation plots against untrained imperfect dynamics
     global OG_UNTRAINED_MODEL
     model_cfg = {"step_size": model.step_size, "nominal_only": True, "perfect_nominal": False, "hidden_layers": 2,  "hidden_neurons": 128, "activation": "tanh"}
     OG_UNTRAINED_MODEL = PlanarArmKnodeModel(model_cfg).to(torch.float64)
@@ -29,21 +58,11 @@ def train_model(model, data, test_data):
     loss_fn = nn.MSELoss()
     optimizer = torch.optim.Adam(model.parameters(), lr=LR)
 
-    training_labels = []
-    training_timesteps = None
-
-    # Dataset generation shizz
-    n_segments = len(data) # Trajectory Length
-    for i in range(n_segments - LOOKAHEAD + 1):
-        segment = torch.tensor(data[i:i+LOOKAHEAD, 1:], dtype=torch.float64) # Removing the time from here, just the x, xdot, u
-        training_labels.append(segment)
-    
-    # Initial conditions: training_labels should match these and 1 predicted step ahead label
-    training_x = torch.tensor(data[:n_segments-LOOKAHEAD+1, 1:], dtype=torch.float64)
-    training_timesteps = torch.arange(LOOKAHEAD, dtype=torch.float64) * 0.002
+    training_x, training_labels = build_lookahead_windows(train_data, LOOKAHEAD)
+    training_timesteps = torch.arange(LOOKAHEAD, dtype=torch.float64) * model.step_size
 
     # Residual net sees z-scored [q, qdot, tau]; Pinocchio still gets physical units.
-    residual_inputs = torch.tensor(data[:, 1:], dtype=torch.float64)
+    residual_inputs = torch.tensor(np.vstack([traj[:, 1:] for traj in train_data]), dtype=torch.float64)
     model.set_residual_input_stats(residual_inputs.mean(dim=0), residual_inputs.std(dim=0))
 
     loss_arr = []

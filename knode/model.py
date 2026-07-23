@@ -47,8 +47,9 @@ class PlanarArmODEFunc(nn.Module):
         self.robot = robot
 
         # Input Size: 6 (q, qdot, tau) | Output Size: 4 (q, qdot)
+        # NOTE: Only qddot -> qdot fucks things up
         self.residual_dynamics_network = create_residual_mlp(
-            input_dim=6, output_dim=4,
+            input_dim=6, output_dim=2,
             hidden_layers=model_cfg["hidden_layers"],
             hidden_neurons=model_cfg["hidden_neurons"],
             activation=model_cfg["activation"],
@@ -120,7 +121,7 @@ class PlanarArmODEFunc(nn.Module):
         # residual_dynamics = self.residual_dynamics_network(self.normalize_residual_input(z)[:, 0:4])
         # residual_dynamics = self.residual_dynamics_network(z[:, 0:4])
         zeros = torch.zeros(z.shape[0], 2, dtype=z.dtype, device=z.device)
-        residual_dynamics = torch.cat([residual_dynamics, zeros], dim=1)
+        residual_dynamics = torch.cat([zeros.clone(), residual_dynamics, zeros.clone()], dim=1)
 
         dynamics = nominal_dynamics + residual_dynamics
         return dynamics

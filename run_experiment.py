@@ -127,10 +127,8 @@ def main():
         train_rollouts = load_data(os.path.join(data_dir, "train"))
         test_rollouts = load_data(os.path.join(data_dir, "test"))
 
-        # TODO: FIX US LATER
-        # train_model currently expects a single rollout array (N, 7).
-        train_data = train_rollouts[0]
-        test_data = test_rollouts[0]
+        train_data = train_rollouts
+        test_data = test_rollouts[0] # TODO: FIX ME LATER
 
         # TODO: DATA AND NODE STEP_SIZE SHOULD MATCH
         model = PlanarArmKnodeModel(model_cfg).to(torch.float64)

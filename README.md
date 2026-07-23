@@ -20,6 +20,13 @@ python evaluate/benchmark_model.py --run <run_name> --epoch 2100 --dataset bench
 ```
 
 
+## Docs
+
+- [Learning on Manifolds — References & Reading Guide](docs/learning-on-manifolds.md)
+- [Training Performance — CUDA, GPU, and JAX](docs/training-performance-gpu-jax.md)
+- [Pinocchio Alternatives — Batched Dynamics for Training](docs/pinocchio-alternatives-batched-dynamics.md)
+- [frax — JAX Robot Dynamics for KNODE Training](docs/frax-jax-dynamics.md)
+
 ## About
 1. Data Collection Harness: `simulate.py`
 2. Robot Dynmics Simulator: `dynamics.py`

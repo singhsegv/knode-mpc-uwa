@@ -146,7 +146,7 @@ def collect(duration, trajectory, cx, cy, omega, a=None, r=None, lx0=None, ly0=N
     des_ee_acc_log = np.empty((n_steps, 2))
 
     if trajectory == "line":
-        x_start, y_start = lx1, ly1
+        x_start, y_start = 0.5 * (lx0 + lx1), 0.5 * (ly0 + ly1)
     elif trajectory == "circle":
         x_start, y_start = cx + r, cy
     else:

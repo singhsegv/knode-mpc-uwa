@@ -1,0 +1,15 @@
+{
+    "name": "benchmark_line",
+    "description": "Benchmark suite: line",
+    "train_trajectories": [
+        {
+            "type": "line",
+            "duration": 15.0,
+            "omega": 1.0,
+            "lx0": 0.2,
+            "ly0": 1.5,
+            "lx1": 1.0,
+            "ly1": 1.5
+        }
+    ]
+}

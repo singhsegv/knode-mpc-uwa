@@ -13,7 +13,8 @@ from pinocchio.visualize import MeshcatVisualizer
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 DEFAULT_URDF = os.path.join(SCRIPT_DIR, "planar-2R.urdf")
 
-GRAVITY = np.array([0.0, -9.81, 0.0])
+# GRAVITY = np.array([0.0, -9.81, 0.0])
+GRAVITY = np.array([0.0, -9.86, 0.0])
 
 
 class PlanarArm:
@@ -76,11 +77,16 @@ class PlanarArm:
         ee = np.array(self.data.oMf[self.ee_frame_id].translation[:2])
         return base, elbow, ee
 
-    def simulate_rollout(self, q0, qdot0, taus, dt, use_torchdiffeq=True):
+    def simulate_rollout(self, q0, qdot0, taus, dt, use_torchdiffeq=True, visualize=False):
         """
         Pinocchio RK4 rollout using a sequence of torques.
         Returns (N, 2) q and (N, 2) qdot logs (pre-step convention, same as data_generator).
         """
+        if visualize:
+            self.enable_visualization()
+
+        # print(GRAVITY)
+
         n = len(taus)
         q_log = np.empty((n, 2))
         qdot_log = np.empty((n, 2))
@@ -89,7 +95,10 @@ class PlanarArm:
         for i in range(n):
             q_log[i] = q
             qdot_log[i] = qdot
-            
+
+            if visualize:
+                self.display(q)
+
             if use_torchdiffeq:
                 q, qdot = self.step_torchdiffeq(q, qdot, taus[i], dt)
             else:

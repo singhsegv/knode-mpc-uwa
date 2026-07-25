@@ -47,15 +47,22 @@ def data_dir_has_npz(data_dir):
 def _generate_split(specs, split_dir):
     os.makedirs(split_dir, exist_ok=True)
     for i, spec in enumerate(specs):
-        output_path = os.path.join(split_dir, f"{i:02d}_{spec['type']}.npz")
+        name_prefix = f"{i:02d}_{spec['type']}"
+        output_path = os.path.join(split_dir, f"{name_prefix}.npz")
         log = collect_from_spec(spec, enable_viz=False) 
         save_log(output_path, log)
 
         plot_collected_trajectory(
-            t_log=log["t"], q_log=log["q"],
+            t_log=log["t"],
+            q_log=log["q"],
+            qdot_log=log["qdot"],
+            tau_log=log["tau"],
+            qddot_log=log["qddot"],
             trajectory=log["meta"]["trajectory"],
-            max_steps=log["meta"]["n_steps"], show=False,
-            output_dir=os.path.dirname(output_path)
+            max_steps=log["meta"]["n_steps"],
+            name_prefix=name_prefix,
+            show=False,
+            output_dir=os.path.dirname(output_path),
         )
 
         print(f"Saved {len(log['t'])} samples -> {output_path}")

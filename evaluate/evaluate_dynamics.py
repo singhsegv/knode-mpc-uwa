@@ -115,23 +115,17 @@ def evaluate_shit(data_path, knode_model=None):
     return results
 
 
-def main():
-    pass
-
-
 if __name__ == "__main__":
     data_dir = "/Users/singhsegv/upenn-research-scalar/implementations/learning-manipulator-dynamics/knode-mpc-planar-arm/data/benchmark_basic"
-    model_cfg = {"step_size": DT, "nominal_only": False, "perfect_nominal": False, "hidden_layers": 2,  "hidden_neurons": 128, "activation": "tanh"}
-    model = PlanarArmKnodeModel(model_cfg).to(torch.float64)
+    # model_cfg = {"step_size": DT, "nominal_only": False, "perfect_nominal": False, "hidden_layers": 2,  "hidden_neurons": 128, "activation": "tanh"}
+    # model = PlanarArmKnodeModel(model_cfg).to(torch.float64)
 
-    epoch = latest_checkpoint_epoch()
-    if epoch is None:
-        raise FileNotFoundError(
-            f"No checkpoints found under {os.path.join(SCRIPT_DIR, 'checkpoints')}"
-        )
+    # epoch = latest_checkpoint_epoch()
+    # if epoch is None:
+    #     raise FileNotFoundError(f"No checkpoints found under {os.path.join(SCRIPT_DIR, 'checkpoints')}")
 
-    load_model_checkpoint(model, epoch)
+    # load_model_checkpoint(model, epoch)
     
-    print(f"Loaded KNODE checkpoint epoch {epoch}")
+    # print(f"Loaded KNODE checkpoint epoch {epoch}")
     # evaluate_shit(data_dir)
     evaluate_shit(data_dir, model)

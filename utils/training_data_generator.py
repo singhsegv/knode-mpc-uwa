@@ -38,12 +38,15 @@ DEFAULT_OUTPUT_DIR = os.path.join(PROJECT_ROOT, "data")
 PLOT_OUTPUT_DIR = os.path.join(PROJECT_ROOT, "outputs")
 
 
-def plot_collected_trajectory(t_log, q_log, trajectory=None, max_steps=None, output_dir=PLOT_OUTPUT_DIR, show=False):
+def plot_collected_trajectory(t_log, q_log, qdot_log, tau_log, qddot_log, trajectory=None, max_steps=None, output_dir=PLOT_OUTPUT_DIR, name_prefix=None, arm=None, show=False):
     """
     Plot collected rollout in joint and task space.
 
     t_log: (N,) time [s]
     q_log: (N, 2) joint positions
+    qdot_log: (N, 2) joint velocities
+    tau_log: (N, 2) applied torques
+    qddot_log: (N, 2) commanded joint accelerations
     """
     n = len(t_log)
     if max_steps is not None:
@@ -51,24 +54,34 @@ def plot_collected_trajectory(t_log, q_log, trajectory=None, max_steps=None, out
 
     time = t_log[:n]
     q = q_log[:n]
-    xy = robot.ee_positions(q)
+    qdot = qdot_log[:n]
+    tau = tau_log[:n]
+    qddot = qddot_log[:n]
+    fk_robot = arm if arm is not None else robot
+    xy = fk_robot.ee_positions(q)
 
     suffix = f"_{trajectory}" if trajectory is not None else ""
     title_suffix = f" ({trajectory})" if trajectory is not None else ""
 
-    fig, axes = plt.subplots(2, 2, figsize=(12, 8), sharex=True)
+    fig, axes = plt.subplots(5, 2, figsize=(12, 14), sharex=True)
     fig.suptitle(f"Collected trajectory{title_suffix}", fontsize=13)
 
-    joint_labels = ["q1", "q2"]
-    for i in range(2):
-        ax = axes[0, i]
-        ax.plot(time, q[:, i], "b-", linewidth=1.5)
-        ax.set_ylabel(joint_labels[i])
-        ax.grid(True, alpha=0.3)
+    row_specs = [
+        (q, ["q1", "q2"]),
+        (qdot, ["qdot1", "qdot2"]),
+        (tau, ["tau1 [Nm]", "tau2 [Nm]"]),
+        (qddot, ["qddot1", "qddot2"]),
+    ]
+    for row, (data, labels) in enumerate(row_specs):
+        for i in range(2):
+            ax = axes[row, i]
+            ax.plot(time, data[:, i], "b-", linewidth=1.5)
+            ax.set_ylabel(labels[i])
+            ax.grid(True, alpha=0.3)
 
     task_labels = ["x", "y"]
     for i in range(2):
-        ax = axes[1, i]
+        ax = axes[4, i]
         ax.plot(time, xy[:, i], "b-", linewidth=1.5)
         ax.set_xlabel("time [s]")
         ax.set_ylabel(task_labels[i])
@@ -77,7 +90,14 @@ def plot_collected_trajectory(t_log, q_log, trajectory=None, max_steps=None, out
     fig.tight_layout()
 
     os.makedirs(output_dir, exist_ok=True)
-    save_path = os.path.join(output_dir, f"collected_trajectory{suffix}.png")
+    if name_prefix is not None:
+        traj_name = f"{name_prefix}_collected_trajectory"
+        xy_name = f"{name_prefix}_collected_task_space_path"
+    else:
+        traj_name = f"collected_trajectory{suffix}"
+        xy_name = f"collected_task_space_path{suffix}"
+        
+    save_path = os.path.join(output_dir, f"{traj_name}.png")
     fig.savefig(save_path, dpi=150)
 
     xy_fig, xy_ax = plt.subplots(figsize=(6, 6))
@@ -87,7 +107,7 @@ def plot_collected_trajectory(t_log, q_log, trajectory=None, max_steps=None, out
     xy_ax.set_title(f"Task-space path{title_suffix}")
     xy_ax.axis("equal")
     xy_ax.grid(True, alpha=0.3)
-    xy_path = os.path.join(output_dir, f"collected_task_space_path{suffix}.png")
+    xy_path = os.path.join(output_dir, f"{xy_name}.png")
     xy_fig.tight_layout()
     xy_fig.savefig(xy_path, dpi=150)
 
@@ -141,6 +161,7 @@ def collect(duration, trajectory, cx, cy, omega, a=None, r=None, lx0=None, ly0=N
     q_log = np.empty((n_steps, DOF))
     qdot_log = np.empty((n_steps, DOF))
     tau_log = np.empty((n_steps, DOF))
+    qddot_log = np.empty((n_steps, DOF))
     des_ee_pos_log = np.empty((n_steps, 2))
     des_ee_vel_log = np.empty((n_steps, 2))
     des_ee_acc_log = np.empty((n_steps, 2))
@@ -199,10 +220,13 @@ def collect(duration, trajectory, cx, cy, omega, a=None, r=None, lx0=None, ly0=N
         tau = robot.inverse_dynamics(q, qdot, qdd_fb).copy()
         # tau = np.array([0.0, 0.0, 0.0])
 
+        # tau = tau + robot.gravity_forces(q)
+
         # TODO: We might be sketchy: Check data written at the beginning/end of the step
         q_log[i] = q.copy()
         qdot_log[i] = qdot.copy()
         tau_log[i] = tau.copy()
+        qddot_log[i] = qdd_fb.copy()
 
         if enable_viz:
             robot.display(q)
@@ -219,6 +243,7 @@ def collect(duration, trajectory, cx, cy, omega, a=None, r=None, lx0=None, ly0=N
         "q": q_log,
         "qdot": qdot_log,
         "tau": tau_log,
+        "qddot": qddot_log,
         "des_ee_pos": des_ee_pos_log,
         "des_ee_vel": des_ee_vel_log,
         "des_ee_acc": des_ee_acc_log,
@@ -270,6 +295,7 @@ def save_log(output_path, log):
         q=log["q"],
         qdot=log["qdot"],
         tau=log["tau"],
+        qddot=log["qddot"],
         des_ee_pos=log["des_ee_pos"],
         des_ee_vel=log["des_ee_vel"],
         des_ee_acc=log["des_ee_acc"],
@@ -308,9 +334,10 @@ def main():
     if args.custom_dynamics:
         model_cfg = {"step_size": DT, "nominal_only": False, "perfect_nominal": False, "hidden_layers": 2,  "hidden_neurons": 128, "activation": "tanh"}
         model = PlanarArmKnodeModel(model_cfg).to(torch.float64)
-        run_dir = "/Users/singhsegv/upenn-research-scalar/implementations/learning-manipulator-dynamics/knode-mpc-planar-arm/runs/20260715_213721_evaluation1_basic1"
+        run_dir = "/Users/singhsegv/upenn-research-scalar/implementations/learning-manipulator-dynamics/knode-mpc-planar-arm/runs/20260723_013245_focussed_circle_basic1_focussed-circle-la-2"
         model_utils.CHECKPOINT_DIR = os.path.join(run_dir, "checkpoints")
-        epoch = latest_checkpoint_epoch()
+        # epoch = latest_checkpoint_epoch()
+        epoch = 2100
 
         if epoch is None:
             raise FileNotFoundError(f"No checkpoints found under {os.path.join(SCRIPT_DIR, 'checkpoints')}")
@@ -321,9 +348,24 @@ def main():
     # Only creates the training trajectories
     specs = config[f"train_trajectories"]
     for i, spec in enumerate(specs):
+        name_prefix = f"{i:02d}_{spec['type']}"
         output_path = os.path.join(output_dir, f"{i:02d}_{spec['type']}.npz")
         log = collect_from_spec(spec, enable_viz=args.viz, knode_model=model)
         save_log(output_path, log)
+
+        plot_collected_trajectory(
+            t_log=log["t"],
+            q_log=log["q"],
+            qdot_log=log["qdot"],
+            tau_log=log["tau"],
+            qddot_log=log["qddot"],
+            trajectory=log["meta"]["trajectory"],
+            max_steps=log["meta"]["n_steps"],
+            name_prefix=name_prefix,
+            show=False,
+            output_dir=os.path.dirname(output_path),
+        )
+        
         print(f"Saved {len(log['t'])} samples at {1.0 / DT:.0f} Hz -> {output_path}")
 
 

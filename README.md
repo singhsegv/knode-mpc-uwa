@@ -39,3 +39,11 @@ python evaluate/benchmark_model.py --run <run_name> --epoch 2100 --dataset bench
 - Check urdf: Origins for links and Other stuff for joints
 - EE orientation tracking (theta is hardcoded to 0)
 - Missing J_dot term in qddot_des
+
+
+
+```
+python evaluate/rollout_existing_data.py focussed_circle/test
+python evaluate/rollout_existing_data.py focussed_circle/test --viz
+python evaluate/rollout_existing_data.py focussed_circle/test --output-dir outputs/rollout_test
+```

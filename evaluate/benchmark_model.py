@@ -29,8 +29,9 @@ from utils.visualize_trajectory import horizon_losses_comparison
 
 RUNS_DIR = os.path.join(PROJECT_ROOT, "runs")
 DATA_DIR = os.path.join(PROJECT_ROOT, "data")
-HORIZONS = [1, 5, 10, 25, 50, 100, 250, 500, 1000, 2500]
+# HORIZONS = [1, 5, 10, 25, 50, 100, 250, 500, 1000, 2500]
 # HORIZONS = list(range(1, 20))
+HORIZONS = [1, 2500]
 LOSS_KEYS = ["total", "q1", "q2", "qdot1", "qdot2"]
 DT = 0.002
 

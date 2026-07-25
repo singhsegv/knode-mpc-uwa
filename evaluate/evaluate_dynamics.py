@@ -115,10 +115,6 @@ def evaluate_shit(data_path, knode_model=None):
     return results
 
 
-def main():
-    pass
-
-
 if __name__ == "__main__":
     data_dir = "/Users/singhsegv/upenn-research-scalar/implementations/learning-manipulator-dynamics/knode-mpc-planar-arm/data/benchmark_basic"
     model_cfg = {"step_size": DT, "nominal_only": False, "perfect_nominal": False, "hidden_layers": 2,  "hidden_neurons": 128, "activation": "tanh"}

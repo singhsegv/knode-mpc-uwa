@@ -62,7 +62,7 @@ def train_model(model, train_data, test_data):
     training_timesteps = torch.arange(LOOKAHEAD, dtype=torch.float64) * model.step_size
 
     # Residual net sees z-scored [q, qdot, tau]; Pinocchio still gets physical units.
-    residual_inputs = torch.tensor(np.vstack([traj[:, 1:] for traj in train_data]), dtype=torch.float64)
+    residual_inputs = torch.tensor(np.vstack([traj[:, 1:3] for traj in train_data]), dtype=torch.float64)
     model.set_residual_input_stats(residual_inputs.mean(dim=0), residual_inputs.std(dim=0))
 
     loss_arr = []

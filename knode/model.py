@@ -1,7 +1,9 @@
 import torch
 import numpy as np
 from torch import nn
+
 from torchdiffeq import odeint_adjoint
+from .pin_autograd import BatchedPinocchioABA
 
 from robots.simulator import PlanarArm
 
@@ -45,11 +47,10 @@ class PlanarArmODEFunc(nn.Module):
     def __init__(self, robot, model_cfg):
         super().__init__()
         self.robot = robot
-
-        # Input Size: 6 (q, qdot, tau) | Output Size: 4 (q, qdot)
-        # NOTE: Only qddot -> qdot fucks things up
+        
+        # NOTE: Move to NN(q1, q2) -> (tau1, tau2) since gravity is a function of state
         self.residual_dynamics_network = create_residual_mlp(
-            input_dim=6, output_dim=2,
+            input_dim=2, output_dim=2,
             hidden_layers=model_cfg["hidden_layers"],
             hidden_neurons=model_cfg["hidden_neurons"],
             activation=model_cfg["activation"],
@@ -60,8 +61,8 @@ class PlanarArmODEFunc(nn.Module):
         nn.init.zeros_(residual_last_layer.bias)
 
         # Stats for residual net inputs [q, qdot, tau]. Nominal still uses physical z.
-        self.register_buffer("residual_input_mean", torch.zeros(6, dtype=torch.float64))
-        self.register_buffer("residual_input_std", torch.ones(6, dtype=torch.float64))
+        self.register_buffer("residual_input_mean", torch.zeros(2, dtype=torch.float64))
+        self.register_buffer("residual_input_std", torch.ones(2, dtype=torch.float64))
 
         self.nominal_only = model_cfg.get("nominal_only", False)
         self.perfect_nominal = model_cfg.get("perfect_nominal", False)
@@ -70,7 +71,7 @@ class PlanarArmODEFunc(nn.Module):
         mean = torch.as_tensor(mean, dtype=self.residual_input_mean.dtype, device=self.residual_input_mean.device)
         std = torch.as_tensor(std, dtype=self.residual_input_std.dtype, device=self.residual_input_std.device)
 
-        if mean.shape != (6,) or std.shape != (6,):
+        if mean.shape != (2,) or std.shape != (2,):
             raise ValueError(f"Expected mean/std of shape (6,), got {tuple(mean.shape)} / {tuple(std.shape)}")
             
         self.residual_input_mean.copy_(mean)
@@ -81,12 +82,15 @@ class PlanarArmODEFunc(nn.Module):
 
     def compute_nominal(self, x, xdot, u):
         """
+        TODO: Now this is only used with nominal-only model.
+
         => With "step_rk4", the model should learn nothing.
         => With "imperfect_dynamics_step", the model should learn gravity torque thingy similar to pinocchio's
         """
         rows = x.shape[0]
         output = np.zeros((rows, 6))
 
+        # TODO: Move from this loop thingy to the batched thingy
         for idx in range(rows):
             x_np = x[idx].detach().cpu().numpy()
             xdot_np = xdot[idx].detach().cpu().numpy()
@@ -107,24 +111,33 @@ class PlanarArmODEFunc(nn.Module):
     def forward(self, t, z):
         """
         NOTE: t is there due to torchdiffeq shizz. Not used.
-        State Z (9x1) => [X, u] => [q1, q2, q3, qdot1, qdot2, qdot3, tau1, tau2, tau2]
+        State Z (4x1) => [X, u] => [q1, q2, qdot1, qdot2, tau1, tau2]
         """
-        x, xdot, u = z[:, 0:2], z[:, 2:4], z[:, 4:]
-
-        nominal_dynamics = self.compute_nominal(x, xdot, u)
-
+        x, xdot, nominal_tau = z[:, 0:2], z[:, 2:4], z[:, 4:]
+        
         if self.nominal_only:
-            return nominal_dynamics
+            # NOTE: Only 1 branch is active, so no stress about mixing
+            # No gradients are involved since everything is just pinocchio driven
+            xddot = self.compute_nominal(x, xdot, nominal_tau)
+            return xddot
+        
+        tau_eff = nominal_tau
+        if not self.perfect_nominal:
+            # rows = nominal_tau.shape[0]
+            # for i in range(rows):
+            #     g = torch.tensor(self.robot.gravity_forces(x[i].detach().cpu().numpy()), dtype=torch.float64)
+            #     nominal_tau[i] = nominal_tau[i] + g
 
-        residual_dynamics = self.residual_dynamics_network(self.normalize_residual_input(z))
-        # residual_dynamics = self.residual_dynamics_network(z)
-        # residual_dynamics = self.residual_dynamics_network(self.normalize_residual_input(z)[:, 0:4])
-        # residual_dynamics = self.residual_dynamics_network(z[:, 0:4])
-        zeros = torch.zeros(z.shape[0], 2, dtype=z.dtype, device=z.device)
-        residual_dynamics = torch.cat([zeros.clone(), residual_dynamics, zeros.clone()], dim=1)
+            g = torch.stack([torch.as_tensor(self.robot.gravity_forces(q.detach().cpu().numpy()), device=x.device, dtype=x.dtype) for q in x])
+            tau_eff = nominal_tau + g
 
-        dynamics = nominal_dynamics + residual_dynamics
-        return dynamics
+        residual_tau = self.residual_dynamics_network(self.normalize_residual_input(x))
+        total_tau = tau_eff + residual_tau
+        xddot = BatchedPinocchioABA.apply(x, xdot, total_tau, self.robot.model, self.robot.data)
+
+        # TODO: Fix us later
+        zeros = torch.zeros_like(nominal_tau)
+        return torch.cat([xdot, xddot, zeros], dim=1) # [qdot, qddot, dtau/dt=0]
 
 
 class PlanarArmKnodeModel(nn.Module):

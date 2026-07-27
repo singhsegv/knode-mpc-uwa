@@ -59,7 +59,9 @@ def train_model(model, train_data, test_data):
     optimizer = torch.optim.Adam(model.parameters(), lr=LR)
 
     training_x, training_labels = build_lookahead_windows(train_data, LOOKAHEAD)
-    training_timesteps = torch.arange(LOOKAHEAD, dtype=torch.float64) * model.step_size
+    labels_stacked = torch.stack(training_labels, dim=0)  # (batch, lookahead, 6)
+    # ZOH: step k uses tau from the state at the start of that interval.
+    step_torques = labels_stacked[:, :-1, 4:6]
 
     # Residual net sees z-scored [q, qdot, tau]; Pinocchio still gets physical units.
     residual_inputs = torch.tensor(np.vstack([traj[:, 1:3] for traj in train_data]), dtype=torch.float64)
@@ -77,9 +79,9 @@ def train_model(model, train_data, test_data):
         # odeint returns (T, batch, 6). Drop t=0 (IC copy); loss only on predicted steps.
         # stack(dim=1) on windows gives (T, batch, 6) — same layout as y_hat.
 
-        # NOTE: No torques in loss
-        y_hat = model(training_x, training_timesteps)[1:].reshape(-1, 6)[:, :4]
-        labels = torch.stack(training_labels, dim=1)[1:].reshape(-1, 6)[:, :4]
+        # NOTE: No torques in loss; step_torques teacher-forces GT tau each step.
+        y_hat = model(training_x, step_torques=step_torques)[1:].reshape(-1, 6)[:, :4]
+        labels = labels_stacked[:, 1:, :4].reshape(-1, 4)
         
         loss = loss_fn(y_hat, labels)
         loss_arr.append(loss.item())

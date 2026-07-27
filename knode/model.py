@@ -150,6 +150,46 @@ class PlanarArmKnodeModel(nn.Module):
         """Fit residual-input z-score from train columns [q, qdot, tau]."""
         self.func.set_residual_input_stats(mean, std, eps=eps)
 
-    def forward(self, y0, timesteps):
-        z = odeint_adjoint(self.func, y0, timesteps, method="rk4", options={"step_size": self.step_size})
-        return z
+    def _integrate_zoh(self, y0, step_torques):
+        """
+        Piecewise RK4 with zero-order-hold torques.
+
+        step_torques: (batch, n_steps, 2) — tau held constant during each step.
+        Returns (n_steps + 1, batch, 6), same layout as odeint (includes y0 at index 0).
+        """
+        n_steps = step_torques.shape[1]
+        step_times = torch.tensor(
+            [0.0, self.step_size], dtype=y0.dtype, device=y0.device,
+        )
+        states = [y0]
+        current = y0
+        for k in range(n_steps):
+            current = current.clone()
+            current[:, 4:6] = step_torques[:, k, :]
+            segment = odeint_adjoint(
+                self.func, current, step_times,
+                method="rk4", options={"step_size": self.step_size},
+            )
+            current = segment[-1]
+            states.append(current)
+        return torch.stack(states, dim=0)
+
+    def forward(self, y0, timesteps=None, step_torques=None):
+        """
+        Integrate from y0. If step_torques is given, use ZOH torque per step
+        (required for correct multi-step training). Otherwise integrate continuously
+        with dtau/dt = 0 (valid only for a single step).
+        """
+        if step_torques is not None:
+            return self._integrate_zoh(y0, step_torques)
+        if timesteps is None:
+            raise ValueError("Provide timesteps or step_torques.")
+        if len(timesteps) > 2:
+            raise ValueError(
+                "Continuous integration with frozen tau is wrong for lookahead > 2. "
+                "Pass step_torques with one tau per step."
+            )
+        return odeint_adjoint(
+            self.func, y0, timesteps,
+            method="rk4", options={"step_size": self.step_size},
+        )

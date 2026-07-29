@@ -22,6 +22,54 @@ import casadi as ca
 import pinocchio as pin
 import pinocchio.casadi as cpin
 
+def get_dynamics_model():
+    """
+    NOTE: CasADi dynamics model
+
+    TODO: Add same knobs as the KNODE nominal model: gravity / mass / etc
+    Returns symbolic dynamics in CasADi thingy
+
+    TODO: Add configuration settings like NN layers, activations, etc used in KNODE
+    TODO: Weight normalization stuff
+
+    TODO: dt of 0.002 might just fail for MPC??
+
+    nn.Linear(6, 128) -> nn.Tanh() -> nn.Linear(128, 128) -> nn.Tanh() -> nn.Linear(128, 4)
+    """
+    _, cmodel, cdata = get_casadi_pinn_model() 
+
+    # TODO: Check for SX vs MX here -> Dafuq are the side effects
+    nq, nv = cmodel.nq, cmodel.nv
+    q = ca.SX.sym("q", nq)
+    v = ca.SX.sym("v", nv) # qdot
+    tau = ca.SX.sym("tau", nv)
+
+    # Perfect Model
+    nominal_qdd = cpin.aba(cmodel, cdata, q, v, tau)
+
+    # Imperfect Model
+    # g = cpin.computeGeneralizedGravity(cmodel, cdata, q)
+    # nominal_qdd = cpin.aba(cmodel, cdata, q, v, tau + g)
+
+    # Moving from q to x naming convention for clear state derivative shizz
+    x = ca.vertcat(q, v) # state for MPC: [q, qdot], size 4
+    u = tau
+    nominal_xdot = ca.vertcat(v, nominal_qdd)
+
+    f = ca.Function("f", [x, u], [nominal_xdot])   
+    
+    # combined_xdot = nominal_xdot + residual_xdot
+    # f = ca.Function("f", [x, u], [combined_xdot])
+
+    # # Continuous shizz to Discrete shizz mapping
+    intg = ca.integrator(
+        "intg", "rk",
+        { "x": x, "p": u, "ode": f(x, u)},
+        dict(tf=0.002, simplify=True, number_of_finite_elements=4),
+    )
+
+    return ca.Function("F", [x, u], [intg(x0=x, p=u)["xf"]])
+
 
 def tensor_to_dm(t: torch.tensor) -> ca.DM:
     """torch tensor to numpy to dm for CasADi"""
@@ -43,6 +91,21 @@ def open_loop_run():
         print("----------------------------")
         print(np.max(np.abs(pin_x_next - cas_x_next)))
         print("----------------------------")
+
+
+# def later():
+#     from utils.data_utils import load_evaluation_data
+
+#     traj = load_evaluation_data("data/benchmark_basic")[0]  # e.g. 00_circle
+#     controls = traj["controls"]  # (N, 7): [t, q, qdot, tau]
+
+#     x0 = controls[0, 1:5]                          # [q, qdot]
+#     xref_traj = controls[:N+1, 1:5].T              # (4, N+1) time-varying joint ref
+#     des_ee = traj["des_ee"]                        # (N, 6): task-space ref
+
+#     # Tracking
+#     cost += ca.sumsqr(X[:, k] - xref_traj[:, k])   # joint-space tracking
+
 
 
 if __name__ == "__main__":

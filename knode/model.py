@@ -46,10 +46,9 @@ class PlanarArmODEFunc(nn.Module):
         super().__init__()
         self.robot = robot
 
-        # Input Size: 6 (q, qdot, tau) | Output Size: 4 (q, qdot)
-        # NOTE: Only qddot -> qdot fucks things up
+        # Input Size: 2 (q1, q2) | Output Size: 2 (qddot1, qddot2)
         self.residual_dynamics_network = create_residual_mlp(
-            input_dim=6, output_dim=2,
+            input_dim=2, output_dim=2,
             hidden_layers=model_cfg["hidden_layers"],
             hidden_neurons=model_cfg["hidden_neurons"],
             activation=model_cfg["activation"],
@@ -59,25 +58,8 @@ class PlanarArmODEFunc(nn.Module):
         nn.init.zeros_(residual_last_layer.weight)
         nn.init.zeros_(residual_last_layer.bias)
 
-        # Stats for residual net inputs [q, qdot, tau]. Nominal still uses physical z.
-        self.register_buffer("residual_input_mean", torch.zeros(6, dtype=torch.float64))
-        self.register_buffer("residual_input_std", torch.ones(6, dtype=torch.float64))
-
         self.nominal_only = model_cfg.get("nominal_only", False)
         self.perfect_nominal = model_cfg.get("perfect_nominal", False)
-
-    def set_residual_input_stats(self, mean, std, eps=1e-8):
-        mean = torch.as_tensor(mean, dtype=self.residual_input_mean.dtype, device=self.residual_input_mean.device)
-        std = torch.as_tensor(std, dtype=self.residual_input_std.dtype, device=self.residual_input_std.device)
-
-        if mean.shape != (6,) or std.shape != (6,):
-            raise ValueError(f"Expected mean/std of shape (6,), got {tuple(mean.shape)} / {tuple(std.shape)}")
-            
-        self.residual_input_mean.copy_(mean)
-        self.residual_input_std.copy_(std.clamp_min(eps))
-
-    def normalize_residual_input(self, z):
-        return (z - self.residual_input_mean) / self.residual_input_std
 
     def compute_nominal(self, x, xdot, u):
         """
@@ -104,6 +86,7 @@ class PlanarArmODEFunc(nn.Module):
         output = torch.from_numpy(output).to(x.device, dtype=x.dtype)
         return output
 
+
     def forward(self, t, z):
         """
         NOTE: t is there due to torchdiffeq shizz. Not used.
@@ -116,13 +99,12 @@ class PlanarArmODEFunc(nn.Module):
         if self.nominal_only:
             return nominal_dynamics
 
-        residual_dynamics = self.residual_dynamics_network(self.normalize_residual_input(z))
-        # residual_dynamics = self.residual_dynamics_network(z)
-        # residual_dynamics = self.residual_dynamics_network(self.normalize_residual_input(z)[:, 0:4])
-        # residual_dynamics = self.residual_dynamics_network(z[:, 0:4])
+        # residual_dynamics = self.residual_dynamics_network(self.normalize_residual_input(z))
+        residual_dynamics = self.residual_dynamics_network(x)
         zeros = torch.zeros(z.shape[0], 2, dtype=z.dtype, device=z.device)
-        residual_dynamics = torch.cat([zeros.clone(), residual_dynamics, zeros.clone()], dim=1)
 
+        # Adds residual dynamics: (qdot + 0, qddot + residual, 0 + 0)
+        residual_dynamics = torch.cat([zeros.clone(), residual_dynamics, zeros.clone()], dim=1)
         dynamics = nominal_dynamics + residual_dynamics
         return dynamics
 
@@ -130,8 +112,6 @@ class PlanarArmODEFunc(nn.Module):
 class PlanarArmKnodeModel(nn.Module):
     """
     Wrapper that integrates the planar arm dynamics over time.
-
-    TODO: Batching and all is a shit show right now
     """
     def __init__(self, model_cfg):
         """
@@ -145,11 +125,7 @@ class PlanarArmKnodeModel(nn.Module):
         self.perfect_nominal = model_cfg.get("perfect_nominal", False)
 
         self.func = PlanarArmODEFunc(robot=self.robot, model_cfg=model_cfg)
-
-    def set_residual_input_stats(self, mean, std, eps=1e-8):
-        """Fit residual-input z-score from train columns [q, qdot, tau]."""
-        self.func.set_residual_input_stats(mean, std, eps=eps)
-
+        
     def _integrate_zoh(self, y0, step_torques):
         """
         Piecewise RK4 with zero-order-hold torques.
@@ -189,7 +165,4 @@ class PlanarArmKnodeModel(nn.Module):
                 "Continuous integration with frozen tau is wrong for lookahead > 2. "
                 "Pass step_torques with one tau per step."
             )
-        return odeint_adjoint(
-            self.func, y0, timesteps,
-            method="rk4", options={"step_size": self.step_size},
-        )
+        return odeint_adjoint(self.func, y0, timesteps, method="rk4", options={"step_size": self.step_size})

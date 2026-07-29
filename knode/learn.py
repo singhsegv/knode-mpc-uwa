@@ -63,10 +63,6 @@ def train_model(model, train_data, test_data):
     # ZOH: step k uses tau from the state at the start of that interval.
     step_torques = labels_stacked[:, :-1, 4:6]
 
-    # Residual net sees z-scored [q, qdot, tau]; Pinocchio still gets physical units.
-    residual_inputs = torch.tensor(np.vstack([traj[:, 1:] for traj in train_data]), dtype=torch.float64)
-    model.set_residual_input_stats(residual_inputs.mean(dim=0), residual_inputs.std(dim=0))
-
     loss_arr = []
     for epoch in range(EPOCHS):
         model.train()

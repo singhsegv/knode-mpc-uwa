@@ -1,23 +1,45 @@
+import os
+import sys
+
 import numpy as np
 import casadi as ca
 import pinocchio as pin
 import pinocchio.casadi as cpin
+
+SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
+PROJECT_ROOT = os.path.dirname(SCRIPT_DIR)
+if PROJECT_ROOT not in sys.path:
+    sys.path.insert(0, PROJECT_ROOT)
+
+from utils.model_utils import load_state_dict_from_run
+
+
+def tensor_to_dm(t):
+    """torch tensor -> CasADi DM."""
+    return ca.DM(t.detach().cpu().numpy())
 
 
 class ManipulatorControl:
     """
     MPC solver.
     """
-    def __init__(self, horizon, dt):
-        self.urdf_path = "/Users/singhsegv/upenn-research-scalar/implementations/learning-manipulator-dynamics/knode-mpc-planar-arm/robots/planar-2R.urdf"
+    def __init__(self, horizon, dt, enable_knode=False, run_dir=None, epoch=-1):
+        self.urdf_path = os.path.join(PROJECT_ROOT, "robots", "planar-2R.urdf")
 
         self.mpc_horizon = horizon
         self.dt = dt
         self.nx = 4
         self.nu = 2
 
-        self.perfect_dynamics = True
-        self.dynamics = self.get_nominal(perfect_dynamics=self.perfect_dynamics)
+        if enable_knode:
+            if run_dir is None:
+                raise ValueError("run_dir is required when enable_knode=True")
+
+            self.run_dir = run_dir
+            self.knode_epoch = epoch
+            self.dynamics = self.get_knode()
+        else:
+            self.dynamics = self.get_nominal(perfect_dynamics=True)
 
         self.opti = ca.Opti()
         self.X = self.opti.variable(4, self.mpc_horizon + 1)
@@ -57,8 +79,11 @@ class ManipulatorControl:
         self.opti.subject_to(self.X[:, 0] == self.x0)
         self.opti.subject_to(self.opti.bounded(-10, self.U, 10))
 
-        p_opts = {"expand": True} 
-        s_opts = {"max_iter": 100, "print_level": 0, "tol": 1e-4}
+        # expand=True inlines the full symbolic graph and can use 10+ GB when
+        # Pinocchio ABA + MLP is chained over the MPC horizon.
+
+        p_opts = {"expand": False}
+        s_opts = {"max_iter": 100, "print_level": 2, "tol": 1e-4, "hessian_approximation": "limited-memory"}
         self.opti.solver("ipopt", p_opts, s_opts)
 
     def solve(self, current_state, reference_horizon, u_guess=None):
@@ -76,9 +101,9 @@ class ManipulatorControl:
             print("Solver failed to converge! Returning suboptimal/last known torques.")
             return self.opti.debug.value(self.U), self.opti.debug.value(self.X)
 
-    def get_casadi_pinn_model(self):
+    def get_casadi_pinn_model(self, gravity=np.array([0.0, -9.81, 0.0])):
         model = pin.buildModelFromUrdf(self.urdf_path)
-        model.gravity.linear = np.array([0.0, -9.81, 0.0])
+        model.gravity.linear = gravity
         cmodel = cpin.Model(model)
         cdata = cmodel.createData()
         return model, cmodel, cdata
@@ -114,44 +139,67 @@ class ManipulatorControl:
         return ca.Function("F", [x, u], [intg(x0=x, p=u)["xf"]])
 
     
-    def get_knode(model_path, nominal_only=False, perfect_dynamics=False):
+    def get_knode(self):
         """
-        TODO: Support for [q1, q2, qdot1, qdot2] as well as [q1, q2] since still not sure.
+        Perfect/Imperfect nominal + Residual network
 
-        Comparison: KNODE Casadi implementation and original generated data
-        Dynamics: Perfect and Imperfect (NN + Residual)
-        
-        TODO: Manual like paper OR L4CasADi
+        ----------------------------------------------------------------------
+        NOTE: Designed for residual qdd and not residual tau
+        ----------------------------------------------------------------------
+
+        Residual KNODE model (epoch=-1 -> latest checkpoint)
+
+        TODO: Doesn't support input normalization yet like the previous knode model used
+        TODO: Try L4CasADi later
+
+        NOTE: Previous imperfect thingy, not I use gravity
+        g = cpin.computeGeneralizedGravity(cmodel, cdata, q)
+        qdd = cpin.aba(cmodel, cdata, q, v, tau + g)
+
+        Only plant should do this
+        _, cmodel, cdata = self.get_casadi_pinn_model(gravity=np.array([0.0, -11.0, 0.0]))
+
+        # TODO: SKETCHY AF -> Should this be stored/loaded instead of being calculated on-the-fly??
+        # mean = tensor_to_dm(state_dict["func.residual_input_mean"])
+        # std  = tensor_to_dm(state_dict["func.residual_input_std"])
+        # z_n = (z - mean) / std
         """
-        _, cmodel, cdata = get_casadi_pinn_model(model_path) 
+        _, cmodel, cdata = self.get_casadi_pinn_model()
 
         nq, nv = cmodel.nq, cmodel.nv
         q = ca.SX.sym("q", nq)
         v = ca.SX.sym("v", nv) # qdot
         tau = ca.SX.sym("tau", nv)
 
-        # Perfect Model
+        # ----------- Nominal Dynamics -----------
         nominal_qdd = cpin.aba(cmodel, cdata, q, v, tau)
-        
-        state_dict = torch.load(model_path)
-        
-        # TODO: SKETCHY AF -> Should this be stored/loaded instead of being calculated on-the-fly??
-        mean = tensor_to_dm(state_dict["func.residual_input_mean"])
-        std  = tensor_to_dm(state_dict["func.residual_input_std"])
-        
-        # W0, b0, W1, b1, W2, b2
+
+        # ----------- Residual Dynamics -----------
+        # TODO: Check us, were are sketchy and ai
+        state_dict, _ = load_state_dict_from_run(self.run_dir, epoch=self.knode_epoch)
         params = [
             tensor_to_dm(state_dict[f"func.residual_dynamics_network.{i}.{attr}"])
-            for i in (0, 2, 4)
+            for i in (0, 2, 4, 6)
             for attr in ("weight", "bias")
         ]
 
-        z = ca.vertcat(q, v, tau)
-        z_n = (z - mean) / std
-
-        # TODO: Make sure this fucker matches
-        h = ca.tanh(ca.mtimes(params[0], z_n) + params[1])
+        # TODO: Hardcoded for 2 hidden layers -> FIXME later
+        h = ca.tanh(ca.mtimes(params[0], q) + params[1])
         h = ca.tanh(ca.mtimes(params[2], h) + params[3])
-        residual_xdot = ca.mtimes(params[4], h) + params[5] # (4,) -> [δq̇, δq̈]
+        h = ca.tanh(ca.mtimes(params[4], h) + params[5])
+        residual_qdd = ca.mtimes(params[6], h) + params[7]
 
-        f = ca.Function("f", [x, u], [residual_xdot])
+        qdd = nominal_qdd + residual_qdd
+
+        xdot = ca.vertcat(v, qdd)
+        x = ca.vertcat(q, v)
+        u = tau
+
+        f = ca.Function("f", [x, u], [xdot])
+        intg = ca.integrator(
+            "intg", "rk",
+            {"x": x, "p": u, "ode": f(x, u)},
+            dict(tf=self.dt, simplify=True, number_of_finite_elements=4),
+        )
+
+        return ca.Function("F", [x, u], [intg(x0=x, p=u)["xf"]])

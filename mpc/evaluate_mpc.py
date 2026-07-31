@@ -115,22 +115,25 @@ def test_single_target_mpc():
 def run_closed_loop_mpc():
     # DT = 0.002 # 500hz
     DT = 0.01 # 100hz
-    MPC_HORIZON = 50
+    MPC_HORIZON = 20
     SIM_TIME = 20.0
 
     current_time = 0.0
     # x_current_state = np.array([0.1, 1.8, 0.0, 0.0])
     
-    # robot = PlanarArm(enable_viz=True, gravity=np.array([0.0, -11.0, 0.0]))
-    robot = PlanarArm(enable_viz=True)
-    mpc = ManipulatorControl(horizon=MPC_HORIZON, dt=DT)
+    # plant = PlanarArm(enable_viz=False)
+    # mpc = ManipulatorControl(horizon=MPC_HORIZON, dt=DT)
+
+    plant = PlanarArm(enable_viz=False, gravity=np.array([0.0, -11.0, 0.0]))
+    knode_path = "/Users/singhsegv/upenn-research-scalar/implementations/learning-manipulator-dynamics/knode-mpc-planar-arm/runs/20260731_151818_mpc_dataset_mpc_basic_mpc-basic-la-5-step-0p01"
+    mpc = ManipulatorControl(horizon=MPC_HORIZON, dt=DT, enable_knode=True, run_dir=knode_path)
 
     # Circle thingy: r=0.25, cx=0.5, cy=0.5
     # NOTE: x is misleading, it is [q, qdot]
-    # q0, _ = inverse_kinematics(robot, robot.get_random_config(), 0.75, 0.5, 0.0, 0.0) # FAILS MISERABLY
-    q0 = robot.get_random_config()
+    q0, _ = inverse_kinematics(plant, plant.get_random_config(), 0.7, 0.5, 0.0, 0.0) # FAILS MISERABLY
+    # q0 = plant.get_random_config()
     x_current_state = np.array([q0[0], q0[1], 0.0, 0.0])
-    robot.display(x_current_state[:2])
+    # plant.display(x_current_state[:2])
 
     # import pdb; pdb.set_trace()
 
@@ -143,7 +146,7 @@ def run_closed_loop_mpc():
     steps = int(SIM_TIME / DT)
     for step in range(steps):
         # X_ref = get_joint_space_trajectory_mpc(current_time, mpc_horizon=MPC_HORIZON, dt=DT)
-        X_ref = get_task_space_trajectory_mpc(current_time, mpc_horizon=MPC_HORIZON, dt=DT, robot=robot, q_prev=x_current_state[:2])
+        X_ref = get_task_space_trajectory_mpc(current_time, mpc_horizon=MPC_HORIZON, dt=DT, robot=plant, q_prev=x_current_state[:2])
 
         t_start = time.perf_counter()
         # TODO: For perfect nominal model, this should be the case
@@ -153,10 +156,10 @@ def run_closed_loop_mpc():
         u_actual = U_optimal[:, 0]
         # TODO: Check me for visual shitzz
         # TODO: check both, use_torchdiffeq true and false
-        # q_next, qdot_next = robot.simulate_rollout(x_current_state[:2], x_current_state[2:], u_actual.reshape(-1, 1).T, DT, use_torchdiffeq=False)
+        # q_next, qdot_next = plant.simulate_rollout(x_current_state[:2], x_current_state[2:], u_actual.reshape(-1, 1).T, DT, use_torchdiffeq=False)
         # import pdb; pdb.set_trace()
-        q_next, qdot_next = robot.step_rk4(x_current_state[:2], x_current_state[2:], u_actual, DT)
-        robot.display(q_next)
+        q_next, qdot_next = plant.step_rk4(x_current_state[:2], x_current_state[2:], u_actual, DT)
+        # plant.display(q_next)
 
         x_current_state = np.concatenate([q_next.flatten(), qdot_next.flatten()])
         current_time += DT

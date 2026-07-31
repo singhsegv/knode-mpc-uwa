@@ -13,8 +13,49 @@ def checkpoint_path(epoch):
     return os.path.join(CHECKPOINT_DIR, f"neural_ode_epoch_{epoch}.pt")
 
 
+def use_run_checkpoints(run_dir):
+    """Point CHECKPOINT_DIR at `<run_dir>/checkpoints`."""
+    global CHECKPOINT_DIR
+    CHECKPOINT_DIR = os.path.join(run_dir, "checkpoints")
+    return CHECKPOINT_DIR
+
+
+def resolve_checkpoint_epoch(epoch=-1):
+    """
+    Resolve a checkpoint epoch.
+    epoch=-1 -> latest checkpoint in CHECKPOINT_DIR; else require neural_ode_epoch_{epoch}.pt.
+    """
+    if CHECKPOINT_DIR is None:
+        raise ValueError("CHECKPOINT_DIR is not set. Call use_run_checkpoints(run_dir) first.")
+
+    if epoch == -1:
+        resolved = latest_checkpoint_epoch()
+        if resolved is None:
+            raise FileNotFoundError(f"No checkpoints found under {CHECKPOINT_DIR}")
+        return resolved
+
+    path = checkpoint_path(epoch)
+    if not os.path.isfile(path):
+        raise FileNotFoundError(f"Checkpoint not found: {path}")
+    return epoch
+
+
+def load_checkpoint_state_dict(epoch=-1):
+    """Load a checkpoint state_dict. epoch=-1 -> latest."""
+    resolved = resolve_checkpoint_epoch(epoch)
+    state_dict = torch.load(checkpoint_path(resolved), map_location="cpu")
+    return state_dict, resolved
+
+
+def load_state_dict_from_run(run_dir, epoch=-1):
+    """Set CHECKPOINT_DIR from run_dir and load state_dict."""
+    use_run_checkpoints(run_dir)
+    return load_checkpoint_state_dict(epoch)
+
+
 def load_model_checkpoint(model, epoch):
-    model.load_state_dict(torch.load(checkpoint_path(epoch)))
+    state_dict, _ = load_checkpoint_state_dict(epoch)
+    model.load_state_dict(state_dict)
 
 
 def save_model_checkpoint(model, epoch):

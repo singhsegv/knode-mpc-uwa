@@ -71,6 +71,9 @@ def evaluate_shit(data_path, knode_model=None):
     n_steps = des_ee.shape[0]
 
     q = traj["controls"][0, 1:3].copy()
+
+    # Testing the lyapunov exponent for chaotic system
+    # q[0] = q[0] + 1e-10
     qdot = traj["controls"][0, 3:5].copy()
 
     # For EE position plotting purposes
@@ -87,6 +90,10 @@ def evaluate_shit(data_path, knode_model=None):
             q, qdot = step_with_knode(knode_model, q, qdot, tau, DT)
         else:
             q, qdot = robot.step_torchdiffeq(q, qdot, tau, DT)
+
+        # Testing the lyapunov exponent for chaotic system
+        # if i == 5000:
+        #     q[0] = q[0] + 1e-9
 
         # Debugging with the ground truth
         # q, qdot = traj["controls"][i, 1:3], traj["controls"][i, 3:5]

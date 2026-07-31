@@ -11,9 +11,13 @@ if PROJECT_ROOT not in sys.path:
     sys.path.insert(0, PROJECT_ROOT)
 
 from robots.simulator import PlanarArm
-from casadi_models import get_nominal
 
-from trajectory_utils import get_joint_space_trajectory_mpc, get_task_space_trajectory_mpc, inverse_kinematics
+from trajectory_utils import (
+    get_joint_space_trajectory_mpc,
+    get_task_space_trajectory_mpc,
+    inverse_kinematics,
+    plot_task_space_tracking,
+)
 from manipulator_mpc import ManipulatorControl
 
 
@@ -112,20 +116,23 @@ def run_closed_loop_mpc():
     # DT = 0.002 # 500hz
     DT = 0.01 # 100hz
     MPC_HORIZON = 50
-    SIM_TIME = 10.0
+    SIM_TIME = 20.0
 
     current_time = 0.0
     # x_current_state = np.array([0.1, 1.8, 0.0, 0.0])
     
+    # robot = PlanarArm(enable_viz=True, gravity=np.array([0.0, -11.0, 0.0]))
     robot = PlanarArm(enable_viz=True)
     mpc = ManipulatorControl(horizon=MPC_HORIZON, dt=DT)
 
-     # Circle thingy: r=0.25, cx=0.5, cy=0.5
+    # Circle thingy: r=0.25, cx=0.5, cy=0.5
     # NOTE: x is misleading, it is [q, qdot]
     # q0, _ = inverse_kinematics(robot, robot.get_random_config(), 0.75, 0.5, 0.0, 0.0) # FAILS MISERABLY
     q0 = robot.get_random_config()
     x_current_state = np.array([q0[0], q0[1], 0.0, 0.0])
     robot.display(x_current_state[:2])
+
+    # import pdb; pdb.set_trace()
 
     history_x = [x_current_state]
     history_u = []
@@ -154,7 +161,7 @@ def run_closed_loop_mpc():
         x_current_state = np.concatenate([q_next.flatten(), qdot_next.flatten()])
         current_time += DT
 
-        # TODO: Do we need the whole history?
+        # TODO: Do we need the whole history for making next MPC steps faster?
         u_prev = np.zeros_like(U_optimal)
         u_prev[:, :-1] = U_optimal[:, 1:]
         u_prev[:, -1] = U_optimal[:, -1]
@@ -165,7 +172,7 @@ def run_closed_loop_mpc():
         if step % 100 == 0:
             print(f"Step {step}/{steps} | Time: {current_time:.2f}s | Solve Time: {solve_time*1000:.1f}ms")
 
-    return np.array(history_x), np.array(history_u)
+    return np.array(history_x), np.array(history_u), DT
 
 
 def compare_casadi_knode():
@@ -177,4 +184,6 @@ def compare_casadi_knode():
 
 
 if __name__ == "__main__":
-    run_closed_loop_mpc()
+    history_x, history_u, dt = run_closed_loop_mpc()
+    robot = PlanarArm()
+    plot_task_space_tracking(history_x, robot, dt=dt, save_path="/Users/singhsegv/upenn-research-scalar/implementations/learning-manipulator-dynamics/knode-mpc-planar-arm/mpc/perfect.png")

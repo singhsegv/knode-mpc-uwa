@@ -1,4 +1,5 @@
 import numpy as np
+import matplotlib.pyplot as plt
 from scipy.optimize import fsolve
 
 
@@ -75,3 +76,64 @@ def get_task_space_trajectory_mpc(start_time, mpc_horizon, dt, robot, q_prev):
         q_prev = q_des.copy()
 
     return X_ref
+
+
+def get_desired_task_space_from_history(history_x, dt, robot):
+    """Reconstruct desired EE (x, y) at each logged state from MPC joint references."""
+    n = len(history_x)
+    desired_xy = np.zeros((n, 2))
+
+    for i in range(n):
+        t = 0.0 if i == 0 else (i - 1) * dt
+        q_prev = history_x[i, :2] if i == 0 else history_x[i - 1, :2]
+        X_ref = get_task_space_trajectory_mpc(
+            t, mpc_horizon=1, dt=dt, robot=robot, q_prev=q_prev
+        )
+        desired_xy[i] = ee_fk(X_ref[:2, 0])
+
+    return desired_xy
+
+
+def plot_task_space_tracking(history_x, robot, dt, show=True, save_path=None):
+    """Plot tracked vs desired end-effector (x, y) from closed-loop MPC history."""
+    history_x = np.asarray(history_x)
+    n = len(history_x)
+    time = np.arange(n) * dt
+
+    actual_xy = np.array([ee_fk(q) for q in history_x[:, :2]])
+    desired_xy = get_desired_task_space_from_history(history_x, dt, robot)
+
+    fig, axes = plt.subplots(1, 2, figsize=(12, 5))
+
+    ax_path = axes[0]
+    ax_path.plot(desired_xy[:, 0], desired_xy[:, 1], "g--", label="desired", linewidth=1.5)
+    ax_path.plot(actual_xy[:, 0], actual_xy[:, 1], "r-", label="tracked", linewidth=1.2)
+    ax_path.set_xlabel("x [m]")
+    ax_path.set_ylabel("y [m]")
+    ax_path.set_title("Task-space path")
+    ax_path.axis("equal")
+    ax_path.grid(True, alpha=0.3)
+    ax_path.legend()
+
+    ax_time = axes[1]
+    ax_time.plot(time, desired_xy[:, 0], "g--", label="desired x", linewidth=1.5)
+    ax_time.plot(time, desired_xy[:, 1], "g--", alpha=0.7, label="desired y", linewidth=1.5)
+    ax_time.plot(time, actual_xy[:, 0], "r-", label="tracked x", linewidth=1.2)
+    ax_time.plot(time, actual_xy[:, 1], "r-", alpha=0.7, label="tracked y", linewidth=1.2)
+    ax_time.set_xlabel("time [s]")
+    ax_time.set_ylabel("position [m]")
+    ax_time.set_title("Task-space tracking vs time")
+    ax_time.grid(True, alpha=0.3)
+    ax_time.legend()
+
+    fig.tight_layout()
+
+    if save_path is not None:
+        fig.savefig(save_path, dpi=150)
+
+    if show:
+        plt.show()
+    else:
+        plt.close(fig)
+
+    return fig, actual_xy, desired_xy

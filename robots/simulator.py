@@ -13,20 +13,18 @@ from pinocchio.visualize import MeshcatVisualizer
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 DEFAULT_URDF = os.path.join(SCRIPT_DIR, "planar-2R.urdf")
 
-GRAVITY = np.array([0.0, -9.81, 0.0])
-
 
 class PlanarArm:
     """
     Pinocchio based dynamics shared by data generation and the K-NODE nominal model.
     """
-    def __init__(self, urdf_path=DEFAULT_URDF, enable_viz=False):
+    def __init__(self, urdf_path=DEFAULT_URDF, enable_viz=False, gravity=np.array([0.0, -9.81, 0.0])):
         """
         TODO: Update the code to visualize
         TODO: Double check the mujoco xml to urdf conversion
         """
         self.model, self.collision_model, self.visual_model = pin.buildModelsFromUrdf(urdf_path)
-        self.model.gravity.linear = GRAVITY
+        self.model.gravity.linear = gravity
         self.data = self.model.createData()
         self.ee_frame_id = self.model.getFrameId("ee")
         

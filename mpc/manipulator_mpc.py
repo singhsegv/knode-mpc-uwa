@@ -36,7 +36,7 @@ class ManipulatorControl:
         cost = 0
 
         # TODO: Tune us
-        Q = np.diag([100.0, 100.0, 1.0, 1.0]) # state penalty
+        Q = np.diag([100.0, 100.0, 100.0, 100.0]) # state penalty
         R = np.diag([0.01, 0.01]) # control errors
 
         for k in range(self.mpc_horizon):

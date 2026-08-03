@@ -112,30 +112,31 @@ def test_single_target_mpc():
     print(f"Error qdot: {qdot_err}")
 
 
+def get_plant_and_controller(dt=0.001, mpc_horizon=20, enable_knode=False):
+    if not enable_knode:
+        plant = PlanarArm(enable_viz=False)
+        mpc = ManipulatorControl(horizon=mpc_horizon, dt=dt)
+    else:
+        plant = PlanarArm(enable_viz=False)
+        knode_path = "/Users/singhsegv/upenn-research-scalar/implementations/learning-manipulator-dynamics/knode-mpc-planar-arm/runs/20260731_151818_mpc_dataset_mpc_basic_mpc-basic-la-5-step-0p01"
+        mpc = ManipulatorControl(horizon=mpc_horizon, dt=dt, enable_knode=True, run_dir=knode_path)
+
+    return plant, mpc
+
+
 def run_closed_loop_mpc():
     # DT = 0.002 # 500hz
     DT = 0.01 # 100hz
-    MPC_HORIZON = 20
-    SIM_TIME = 20.0
-
     current_time = 0.0
-    # x_current_state = np.array([0.1, 1.8, 0.0, 0.0])
+    SIM_TIME = 10.0
+    MPC_HORIZON = 10
+
+    # plant, mpc = get_plant_and_controller(dt=DT, mpc_horizon=MPC_HORIZON, enable_knode=False)
+    plant, mpc = get_plant_and_controller(dt=DT, mpc_horizon=MPC_HORIZON, enable_knode=True)
     
-    # plant = PlanarArm(enable_viz=False)
-    # mpc = ManipulatorControl(horizon=MPC_HORIZON, dt=DT)
-
-    plant = PlanarArm(enable_viz=False, gravity=np.array([0.0, -11.0, 0.0]))
-    knode_path = "/Users/singhsegv/upenn-research-scalar/implementations/learning-manipulator-dynamics/knode-mpc-planar-arm/runs/20260731_151818_mpc_dataset_mpc_basic_mpc-basic-la-5-step-0p01"
-    mpc = ManipulatorControl(horizon=MPC_HORIZON, dt=DT, enable_knode=True, run_dir=knode_path)
-
-    # Circle thingy: r=0.25, cx=0.5, cy=0.5
-    # NOTE: x is misleading, it is [q, qdot]
-    q0, _ = inverse_kinematics(plant, plant.get_random_config(), 0.7, 0.5, 0.0, 0.0) # FAILS MISERABLY
-    # q0 = plant.get_random_config()
+    q0, _ = inverse_kinematics(plant, plant.get_random_config(), 0.7, 0.5, 0.0, 0.0)
+    plant.move_to(q0)
     x_current_state = np.array([q0[0], q0[1], 0.0, 0.0])
-    # plant.display(x_current_state[:2])
-
-    # import pdb; pdb.set_trace()
 
     history_x = [x_current_state]
     history_u = []
@@ -154,10 +155,7 @@ def run_closed_loop_mpc():
         solve_time = time.perf_counter() - t_start
 
         u_actual = U_optimal[:, 0]
-        # TODO: Check me for visual shitzz
         # TODO: check both, use_torchdiffeq true and false
-        # q_next, qdot_next = plant.simulate_rollout(x_current_state[:2], x_current_state[2:], u_actual.reshape(-1, 1).T, DT, use_torchdiffeq=False)
-        # import pdb; pdb.set_trace()
         q_next, qdot_next = plant.step_rk4(x_current_state[:2], x_current_state[2:], u_actual, DT)
         # plant.display(q_next)
 
@@ -176,14 +174,6 @@ def run_closed_loop_mpc():
             print(f"Step {step}/{steps} | Time: {current_time:.2f}s | Solve Time: {solve_time*1000:.1f}ms")
 
     return np.array(history_x), np.array(history_u), DT
-
-
-def compare_casadi_knode():
-    """
-    Comparison: KNODE Casadi implementation and original generated data
-    Dynamics: Perfect and Imperfect
-    """
-    pass
 
 
 if __name__ == "__main__":

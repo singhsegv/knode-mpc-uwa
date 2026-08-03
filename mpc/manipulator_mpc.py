@@ -39,7 +39,7 @@ class ManipulatorControl:
             self.knode_epoch = epoch
             self.dynamics = self.get_knode()
         else:
-            self.dynamics = self.get_nominal(perfect_dynamics=True)
+            self.dynamics = self.get_nominal()
 
         self.opti = ca.Opti()
         self.X = self.opti.variable(4, self.mpc_horizon + 1)
@@ -77,13 +77,20 @@ class ManipulatorControl:
 
         self.opti.minimize(cost)
         self.opti.subject_to(self.X[:, 0] == self.x0)
-        self.opti.subject_to(self.opti.bounded(-10, self.U, 10))
+        self.opti.subject_to(self.opti.bounded(-100, self.U, 100))
 
         # expand=True inlines the full symbolic graph and can use 10+ GB when
         # Pinocchio ABA + MLP is chained over the MPC horizon.
 
-        p_opts = {"expand": False}
-        s_opts = {"max_iter": 100, "print_level": 2, "tol": 1e-4, "hessian_approximation": "limited-memory"}
+        p_opts = {"expand": False, "print_time": False}
+        s_opts = {
+            "max_iter": 100,
+            "print_level": 0,
+            "print_user_options": "no",
+            "print_timing_statistics": "no",
+            "tol": 1e-4,
+            "hessian_approximation": "limited-memory",
+        }
         self.opti.solver("ipopt", p_opts, s_opts)
 
     def solve(self, current_state, reference_horizon, u_guess=None):
@@ -108,21 +115,17 @@ class ManipulatorControl:
         cdata = cmodel.createData()
         return model, cmodel, cdata
 
-    def get_nominal(self, perfect_dynamics=False):
+    def get_nominal(self):
         """ Perfect/Imperfect nominal models based on Pinocchio.CasADi. """
-        _, cmodel, cdata = self.get_casadi_pinn_model()
+        _, cmodel, cdata = self.get_casadi_pinn_model(gravity=np.array([0.0, -11.0, 0.0]))
 
         # TODO: MX or SX ??
         nq, nv = cmodel.nq, cmodel.nv
         q = ca.SX.sym("q", nq)
         v = ca.SX.sym("v", nv) # qdot
         tau = ca.SX.sym("tau", nv)
-        
-        if perfect_dynamics:
-            qdd = cpin.aba(cmodel, cdata, q, v, tau)
-        else:
-            g = cpin.computeGeneralizedGravity(cmodel, cdata, q)
-            qdd = cpin.aba(cmodel, cdata, q, v, tau + g)
+
+        qdd = cpin.aba(cmodel, cdata, q, v, tau)
 
         # Moving from q to x naming convention for clear state derivative shizz
         x = ca.vertcat(q, v) # state for MPC: [q, qdot], size 4
@@ -164,7 +167,7 @@ class ManipulatorControl:
         # std  = tensor_to_dm(state_dict["func.residual_input_std"])
         # z_n = (z - mean) / std
         """
-        _, cmodel, cdata = self.get_casadi_pinn_model()
+        _, cmodel, cdata = self.get_casadi_pinn_model(gravity=np.array([0.0, -11.0, 0.0]))
 
         nq, nv = cmodel.nq, cmodel.nv
         q = ca.SX.sym("q", nq)

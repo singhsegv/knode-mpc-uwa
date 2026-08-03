@@ -21,7 +21,7 @@ def get_joint_space_trajectory_mpc(start_time, mpc_horizon, dt):
     return X_ref
 
 
-def task_space_circle_trajectory(t, r=0.25, cx=1.0, cy=1.0, omega=1.0):
+def task_space_circle_trajectory(t, r=0.25, cx=0.5, cy=0.5, omega=1.0):
     phi = omega * t
     c, s = np.cos(phi), np.sin(phi)
     x = cx + r * c

@@ -82,7 +82,8 @@ class ManipulatorControl:
         # expand=True inlines the full symbolic graph and can use 10+ GB when
         # Pinocchio ABA + MLP is chained over the MPC horizon.
 
-        p_opts = {"expand": False, "print_time": False}
+        p_opts = {"expand": True, "print_time": False}
+        # s_opts = {"max_iter": 100, "tol": 1e-4, "hessian_approximation": "limited-memory"}
         s_opts = {
             "max_iter": 100,
             "print_level": 0,
@@ -100,7 +101,7 @@ class ManipulatorControl:
 
         if u_guess is not None:
             self.opti.set_initial(self.U, u_guess)
-
+            
         try:
             sol = self.opti.solve()
             return sol.value(self.U), sol.value(self.X)

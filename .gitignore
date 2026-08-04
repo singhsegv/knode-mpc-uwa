@@ -4,3 +4,6 @@ archive-runs-data/
 .DS_Store
 runs/
 **/**/*.png
+**/**/*.c
+**/**/*.o
+**/**/*.tmp

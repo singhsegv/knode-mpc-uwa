@@ -18,7 +18,9 @@ from trajectory_utils import (
     inverse_kinematics,
     plot_task_space_tracking,
 )
-from manipulator_mpc import ManipulatorControl
+
+# from manipulator_mpc import ManipulatorControl
+from fatrop_manipulator_mpc import ManipulatorControl
 
 
 def verify_pinn_and_casadi(robot, perfect_dynamics):
@@ -114,7 +116,7 @@ def test_single_target_mpc():
 
 def get_plant_and_controller(dt=0.001, mpc_horizon=20, enable_knode=False):
     if not enable_knode:
-        plant = PlanarArm(enable_viz=False)
+        plant = PlanarArm(enable_viz=False, gravity=np.array([0.0, -9.81, 0.0]))
         mpc = ManipulatorControl(horizon=mpc_horizon, dt=dt)
     else:
         plant = PlanarArm(enable_viz=False)
@@ -128,7 +130,7 @@ def run_closed_loop_mpc():
     # DT = 0.002 # 500hz
     DT = 0.01 # 100hz
     current_time = 0.0
-    SIM_TIME = 10.0
+    SIM_TIME = 1.0
     MPC_HORIZON = 10
 
     # plant, mpc = get_plant_and_controller(dt=DT, mpc_horizon=MPC_HORIZON, enable_knode=False)
@@ -143,6 +145,37 @@ def run_closed_loop_mpc():
     u_prev = None 
 
     print("Starting closed-loop execution...")
+
+    # steps = int(SIM_TIME / DT)
+    # for step in range(steps):
+    #     # X_ref = get_joint_space_trajectory_mpc(current_time, mpc_horizon=MPC_HORIZON, dt=DT)
+    #     X_ref = get_task_space_trajectory_mpc(current_time, mpc_horizon=MPC_HORIZON, dt=DT, robot=plant, q_prev=x_current_state[:2])
+
+    #     t_start = time.perf_counter()
+    #     # TODO: For perfect nominal model, this should be the case
+    #     U_optimal, X_predicted = mpc.solve(x_current_state, X_ref, u_guess=u_prev)
+    #     solve_time = time.perf_counter() - t_start
+
+    #     u_actual = U_optimal[:, 0]
+    #     # TODO: check both, use_torchdiffeq true and false
+    #     q_next, qdot_next = plant.step_rk4(x_current_state[:2], x_current_state[2:], u_actual, DT)
+    #     # plant.display(q_next)
+
+    #     x_current_state = np.concatenate([q_next.flatten(), qdot_next.flatten()])
+    #     current_time += DT
+
+    #     # TODO: Do we need the whole history for making next MPC steps faster?
+    #     u_prev = np.zeros_like(U_optimal)
+    #     u_prev[:, :-1] = U_optimal[:, 1:]
+    #     u_prev[:, -1] = U_optimal[:, -1]
+
+    #     history_x.append(x_current_state)
+    #     history_u.append(u_actual)        
+
+    #     if step % 100 == 0:
+    #         print(f"Step {step}/{steps} | Time: {current_time:.2f}s | Solve Time: {solve_time*1000:.1f}ms")
+
+
 
     steps = int(SIM_TIME / DT)
     for step in range(steps):

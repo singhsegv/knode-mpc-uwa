@@ -83,9 +83,13 @@ class ManipulatorControl:
 
         self.opti.minimize(cost)
 
+        # opts = {
+        #     "jit": True,
+        #     "compiler": "shell",
+        #     "fatrop": {"print_level": 0}
+        # }
         opts = {
-            "jit": True,
-            "compiler": "shell",
+            "expand": True,
             "fatrop": {"print_level": 0}
         }
 
@@ -185,11 +189,24 @@ class ManipulatorControl:
         x = ca.vertcat(q, v)
         u = tau
 
-        f = ca.Function("f", [x, u], [xdot])
-        intg = ca.integrator(
-            "intg", "rk",
-            {"x": x, "p": u, "ode": f(x, u)},
-            dict(tf=self.dt, simplify=True, number_of_finite_elements=4),
-        )
+        # f = ca.Function("f", [x, u], [xdot])
+        # intg = ca.integrator(
+        #     "intg", "rk",
+        #     {"x": x, "p": u, "ode": f(x, u)},
+        #     dict(tf=self.dt, simplify=True, number_of_finite_elements=4),
+        # )
 
-        return ca.Function("F", [x, u], [intg(x0=x, p=u)["xf"]])
+        # return ca.Function("F", [x, u], [intg(x0=x, p=u)["xf"]])
+
+        M = 4
+        dt_step = self.dt / M
+        
+        X_k = x
+        for _ in range(M):
+            k1 = f(X_k, u)
+            k2 = f(X_k + (dt_step / 2) * k1, u)
+            k3 = f(X_k + (dt_step / 2) * k2, u)
+            k4 = f(X_k + dt_step * k3, u)
+            X_k = X_k + (dt_step / 6) * (k1 + 2*k2 + 2*k3 + k4)
+            
+        return ca.Function("F", [x, u], [X_k])

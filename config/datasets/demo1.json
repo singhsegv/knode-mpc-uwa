@@ -1,6 +1,7 @@
 {
     "name": "demo1",
     "description": "Mixed circle, lemniscate, and line trajectories with varying centers, radii, and endpoints. Fixed duration=10s, omega=0.5.",
+    "dt": 0.01,
     "train_trajectories": [
         {
             "type": "circle",

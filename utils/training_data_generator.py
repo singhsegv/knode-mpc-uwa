@@ -28,7 +28,6 @@ from utils.trajectory_generator import circle_trajectory, lemniscate_trajectory,
 robot = PlanarArm(enable_viz=False)
 
 DOF = 2
-DT = 0.002  # 500 Hz
 Kp = np.array([50.0, 50.0])
 Kd = np.array([4.0, 4.0])
 
@@ -129,14 +128,14 @@ def step_with_knode(model, q, qdot, tau, dt):
     return nxt[:2].copy(), nxt[2:4].copy()
 
 
-def collect(duration, trajectory, cx, cy, omega, a=None, r=None, lx0=None, ly0=None, lx1=None, ly1=None, enable_viz=False, knode_model=None):
+def collect(duration, trajectory, cx, cy, omega, a=None, r=None, lx0=None, ly0=None, lx1=None, ly1=None, enable_viz=False, knode_model=None, dt=None):
     """
     Common: omega, duration
     Circle: cx, cy, r
     Lemniscate: cx, cy, a
     Line: lx0, ly0, lx1, ly1
     """
-    n_steps = int(duration / DT)
+    n_steps = int(duration / dt)
     t_log = np.empty(n_steps)
     q_log = np.empty((n_steps, DOF))
     qdot_log = np.empty((n_steps, DOF))
@@ -164,7 +163,7 @@ def collect(duration, trajectory, cx, cy, omega, a=None, r=None, lx0=None, ly0=N
     q_prev = q.copy() # Just as a seed for the solver
 
     for i in range(n_steps):
-        t = i * DT
+        t = i * dt
         t_log[i] = t
 
         if trajectory == "circle":
@@ -210,9 +209,9 @@ def collect(duration, trajectory, cx, cy, omega, a=None, r=None, lx0=None, ly0=N
         # These get saved in the next iteration
         # q, qdot = robot.step_rk4(q, qdot, tau, DT)
         if knode_model is not None:
-            q, qdot = step_with_knode(knode_model, q, qdot, tau, DT)
+            q, qdot = step_with_knode(knode_model, q, qdot, tau, dt)
         else:
-            q, qdot = robot.step_torchdiffeq(q, qdot, tau, DT)
+            q, qdot = robot.step_torchdiffeq(q, qdot, tau, dt)
 
     return {
         "t": t_log,
@@ -222,7 +221,7 @@ def collect(duration, trajectory, cx, cy, omega, a=None, r=None, lx0=None, ly0=N
         "des_ee_pos": des_ee_pos_log,
         "des_ee_vel": des_ee_vel_log,
         "des_ee_acc": des_ee_acc_log,
-        "dt": DT,
+        "dt": dt,
         "meta": {
             "trajectory": trajectory,
             "duration": duration,
@@ -240,7 +239,7 @@ def collect(duration, trajectory, cx, cy, omega, a=None, r=None, lx0=None, ly0=N
     }
 
 
-def collect_from_spec(spec, enable_viz=False, knode_model=None):
+def collect_from_spec(spec, enable_viz=False, knode_model=None, dt=None):
     trajectory = spec["type"]
     duration = spec.get("duration", -1)
     omega = spec.get("omega", -1)
@@ -259,6 +258,7 @@ def collect_from_spec(spec, enable_viz=False, knode_model=None):
         ly1=spec.get("ly1"),
         enable_viz=enable_viz,
         knode_model=knode_model,
+        dt=dt,
     )
 
 
@@ -304,6 +304,8 @@ def main():
 
     model = None
 
+    dt = config["dt"]
+
     # Only for Standalone script
     if args.custom_dynamics:
         model_cfg = {"step_size": DT, "nominal_only": False, "perfect_nominal": False, "hidden_layers": 2,  "hidden_neurons": 128, "activation": "tanh"}
@@ -322,9 +324,9 @@ def main():
     specs = config[f"train_trajectories"]
     for i, spec in enumerate(specs):
         output_path = os.path.join(output_dir, f"{i:02d}_{spec['type']}.npz")
-        log = collect_from_spec(spec, enable_viz=args.viz, knode_model=model)
+        log = collect_from_spec(spec, enable_viz=args.viz, knode_model=model, dt=dt)
         save_log(output_path, log)
-        print(f"Saved {len(log['t'])} samples at {1.0 / DT:.0f} Hz -> {output_path}")
+        print(f"Saved {len(log['t'])} samples at {1.0 / dt:.0f} Hz -> {output_path}")
 
 
 if __name__ == "__main__":

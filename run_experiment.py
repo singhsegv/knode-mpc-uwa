@@ -44,11 +44,11 @@ def data_dir_has_npz(data_dir):
     return any(name.endswith(".npz") for name in os.listdir(data_dir))
 
 
-def _generate_split(specs, split_dir):
+def _generate_split(specs, split_dir, dt):
     os.makedirs(split_dir, exist_ok=True)
     for i, spec in enumerate(specs):
         output_path = os.path.join(split_dir, f"{i:02d}_{spec['type']}.npz")
-        log = collect_from_spec(spec, enable_viz=False) 
+        log = collect_from_spec(spec, enable_viz=False, dt=dt)
         save_log(output_path, log)
 
         plot_collected_trajectory(
@@ -66,15 +66,17 @@ def ensure_dataset(dataset_cfg, data_dir):
     train_dir = os.path.join(data_dir, "train")
     test_dir = os.path.join(data_dir, "test")
 
+    dt = dataset_cfg["dt"]
+
     if data_dir_has_npz(train_dir) and data_dir_has_npz(test_dir):
         print(f"Using existing data in {train_dir} and {test_dir}")
         return
 
     print(f"Generating train/test data from dataset config into {data_dir}...")
     if not data_dir_has_npz(train_dir):
-        _generate_split(dataset_cfg["train_trajectories"], train_dir)
+        _generate_split(dataset_cfg["train_trajectories"], train_dir, dt)
     if not data_dir_has_npz(test_dir):
-        _generate_split(dataset_cfg["test_trajectories"], test_dir)
+        _generate_split(dataset_cfg["test_trajectories"], test_dir, dt)
 
 
 def make_run_dir(dataset_name, model_name, experiment_name=None):

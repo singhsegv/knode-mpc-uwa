@@ -1,6 +1,7 @@
 {
     "name": "focussed_circle",
     "description": "Goal is to learn the basic AF circle trajectory",
+    "dt": 0.01,
     "train_trajectories": [
         {
             "type": "circle",

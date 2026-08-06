@@ -26,6 +26,8 @@ from utils.trajectory_generator import circle_trajectory, lemniscate_trajectory,
 
 # Common thingy for all functions
 robot = PlanarArm(enable_viz=False)
+# robot = PlanarArm(enable_viz=False, gravity=np.array([0.0, -11.0, 0.0]))
+# robot = PlanarArm(enable_viz=False, gravity=np.array([0.0, 0.0, 0.0]))
 
 DOF = 2
 Kp = np.array([50.0, 50.0])
@@ -37,12 +39,15 @@ DEFAULT_OUTPUT_DIR = os.path.join(PROJECT_ROOT, "data")
 PLOT_OUTPUT_DIR = os.path.join(PROJECT_ROOT, "outputs")
 
 
-def plot_collected_trajectory(t_log, q_log, trajectory=None, max_steps=None, output_dir=PLOT_OUTPUT_DIR, show=False):
+def plot_collected_trajectory(
+        t_log, q_log, qdot_log, qdd_fb_log, tau_log,
+        trajectory=None, max_steps=None, output_dir=PLOT_OUTPUT_DIR, show=False,
+    ):
     """
-    Plot collected rollout in joint and task space.
+    Plot collected rollout: q, qdot, qdd_fb, tau in joint space; EE path separately.
 
     t_log: (N,) time [s]
-    q_log: (N, 2) joint positions
+    q_log, qdot_log, qdd_fb_log, tau_log: (N, 2)
     """
     n = len(t_log)
     if max_steps is not None:
@@ -50,28 +55,32 @@ def plot_collected_trajectory(t_log, q_log, trajectory=None, max_steps=None, out
 
     time = t_log[:n]
     q = q_log[:n]
+    qdot = qdot_log[:n]
+    qdd_fb = qdd_fb_log[:n]
+    tau = tau_log[:n]
     xy = robot.ee_positions(q)
 
     suffix = f"_{trajectory}" if trajectory is not None else ""
     title_suffix = f" ({trajectory})" if trajectory is not None else ""
 
-    fig, axes = plt.subplots(2, 2, figsize=(12, 8), sharex=True)
+    fig, axes = plt.subplots(4, 2, figsize=(12, 11), sharex=True)
     fig.suptitle(f"Collected trajectory{title_suffix}", fontsize=13)
 
-    joint_labels = ["q1", "q2"]
-    for i in range(2):
-        ax = axes[0, i]
-        ax.plot(time, q[:, i], "b-", linewidth=1.5)
-        ax.set_ylabel(joint_labels[i])
-        ax.grid(True, alpha=0.3)
+    row_specs = [
+        (q, ["q1", "q2"]),
+        (qdot, ["qdot1", "qdot2"]),
+        (qdd_fb, ["qddot1", "qddot2"]),
+        (tau, ["tau1", "tau2"]),
+    ]
+    for row, (data, labels) in enumerate(row_specs):
+        for i in range(2):
+            ax = axes[row, i]
+            ax.plot(time, data[:, i], "b-", linewidth=1.2)
+            ax.set_ylabel(labels[i])
+            ax.grid(True, alpha=0.3)
 
-    task_labels = ["x", "y"]
-    for i in range(2):
-        ax = axes[1, i]
-        ax.plot(time, xy[:, i], "b-", linewidth=1.5)
+    for ax in axes[-1, :]:
         ax.set_xlabel("time [s]")
-        ax.set_ylabel(task_labels[i])
-        ax.grid(True, alpha=0.3)
 
     fig.tight_layout()
 
@@ -139,6 +148,7 @@ def collect(duration, trajectory, cx, cy, omega, a=None, r=None, lx0=None, ly0=N
     t_log = np.empty(n_steps)
     q_log = np.empty((n_steps, DOF))
     qdot_log = np.empty((n_steps, DOF))
+    qdd_fb_log = np.empty((n_steps, DOF))
     tau_log = np.empty((n_steps, DOF))
     des_ee_pos_log = np.empty((n_steps, 2))
     des_ee_vel_log = np.empty((n_steps, 2))
@@ -201,6 +211,7 @@ def collect(duration, trajectory, cx, cy, omega, a=None, r=None, lx0=None, ly0=N
         # TODO: We might be sketchy: Check data written at the beginning/end of the step
         q_log[i] = q.copy()
         qdot_log[i] = qdot.copy()
+        qdd_fb_log[i] = qdd_fb.copy()
         tau_log[i] = tau.copy()
 
         if enable_viz:
@@ -217,6 +228,7 @@ def collect(duration, trajectory, cx, cy, omega, a=None, r=None, lx0=None, ly0=N
         "t": t_log,
         "q": q_log,
         "qdot": qdot_log,
+        "qdd_fb": qdd_fb_log,
         "tau": tau_log,
         "des_ee_pos": des_ee_pos_log,
         "des_ee_vel": des_ee_vel_log,
@@ -269,6 +281,7 @@ def save_log(output_path, log):
         t=log["t"],
         q=log["q"],
         qdot=log["qdot"],
+        qdd_fb=log["qdd_fb"],
         tau=log["tau"],
         des_ee_pos=log["des_ee_pos"],
         des_ee_vel=log["des_ee_vel"],

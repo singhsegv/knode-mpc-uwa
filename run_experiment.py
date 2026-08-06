@@ -52,10 +52,11 @@ def _generate_split(specs, split_dir, dt):
         save_log(output_path, log)
 
         plot_collected_trajectory(
-            t_log=log["t"], q_log=log["q"],
+            t_log=log["t"], q_log=log["q"], qdot_log=log["qdot"],
+            qdd_fb_log=log["qdd_fb"], tau_log=log["tau"],
             trajectory=log["meta"]["trajectory"],
             max_steps=log["meta"]["n_steps"], show=False,
-            output_dir=os.path.dirname(output_path)
+            output_dir=os.path.dirname(output_path),
         )
 
         print(f"Saved {len(log['t'])} samples -> {output_path}")

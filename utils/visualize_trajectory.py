@@ -43,6 +43,7 @@ def plot_trajectory_comparison(
         y_hat, ground_truth, dt=0.002, label=None, max_steps=None, output_dir=None,
         show=False, record_video=True, video_fps=30,
         nominal_qdd_log=None, residual_qdd_log=None, total_qdd_log=None,
+        max_qdd_steps=None,
     ):
     """
     Compare predicted rollout vs ground truth in joint and task space.
@@ -51,6 +52,7 @@ def plot_trajectory_comparison(
     ground_truth: (N, 7) [t, q, qdot, tau]
     nominal_qdd_log, residual_qdd_log, total_qdd_log: optional lists of (1, 6)
         dynamics vectors from evaluate_model; qddot at indices 2:4.
+    max_qdd_steps: if set, only plot this many qddot samples (from t=1 onward).
     """
     if output_dir is None:
         output_dir = DEFAULT_OUTPUT_DIR
@@ -109,6 +111,8 @@ def plot_trajectory_comparison(
         residual_qdd = _to_numpy(residual_qdd_log)[:, 0, 2:4]
         total_qdd = _to_numpy(total_qdd_log)[:, 0, 2:4]
         n_qdd = min(n - 1, len(nominal_qdd))
+        if max_qdd_steps is not None:
+            n_qdd = min(n_qdd, max_qdd_steps)
         qdd_time = time[1:n_qdd + 1]
 
         qddot_rows = [

@@ -14,6 +14,7 @@ OUTPUT_DIR = "outputs"
 LOOKAHEAD = 2
 EPOCHS = 15000
 LR = 0.001
+QDD_PLOT_STEPS = 10000
 
 OG_UNTRAINED_MODEL = None
 
@@ -107,6 +108,7 @@ def train_model(model, train_data, test_data):
                 nominal_qdd_log=nominal_qdd_log_open_loop,
                 residual_qdd_log=residual_qdd_log_open_loop,
                 total_qdd_log=total_qdd_log_open_loop,
+                max_qdd_steps=QDD_PLOT_STEPS,
             )
             plot_trajectory_comparison(
                 y_hat_stepwise, test_data, dt=model.step_size, label=f"{epoch}_stepwise",
@@ -114,6 +116,7 @@ def train_model(model, train_data, test_data):
                 nominal_qdd_log=nominal_qdd_log_stepwise,
                 residual_qdd_log=residual_qdd_log_stepwise,
                 total_qdd_log=total_qdd_log_stepwise,
+                max_qdd_steps=QDD_PLOT_STEPS,
             )
 
             # TODO: FIX US -> Not feasible using this

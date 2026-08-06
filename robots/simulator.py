@@ -229,3 +229,6 @@ class PlanarArm:
         self.viz = MeshcatVisualizer(self.model, self.collision_model, self.visual_model)
         self.viz.initViewer(open=True)
         self.viz.loadViewerModel()
+
+    def get_random_config(self):
+        return pin.randomConfiguration(self.model)

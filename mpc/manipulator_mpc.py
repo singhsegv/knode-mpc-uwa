@@ -1,6 +1,7 @@
 import os
 import sys
 
+import torch
 import numpy as np
 import casadi as ca
 import pinocchio as pin
@@ -12,6 +13,7 @@ if PROJECT_ROOT not in sys.path:
     sys.path.insert(0, PROJECT_ROOT)
 
 from utils.model_utils import load_state_dict_from_run
+from casadi_knode_callback import ResidualNNCallback
 
 
 def tensor_to_dm(t):
@@ -142,67 +144,148 @@ class ManipulatorControl:
         return ca.Function("F", [x, u], [intg(x0=x, p=u)["xf"]])
 
     
+    # def get_knode(self):
+    #     """
+    #     Perfect/Imperfect nominal + Residual network
+
+    #     ----------------------------------------------------------------------
+    #     NOTE: Designed for residual qdd and not residual tau
+    #     ----------------------------------------------------------------------
+
+    #     Residual KNODE model (epoch=-1 -> latest checkpoint)
+
+    #     TODO: Doesn't support input normalization yet like the previous knode model used
+    #     TODO: Try L4CasADi later
+
+    #     NOTE: Previous imperfect thingy, not I use gravity
+    #     g = cpin.computeGeneralizedGravity(cmodel, cdata, q)
+    #     qdd = cpin.aba(cmodel, cdata, q, v, tau + g)
+
+    #     Only plant should do this
+    #     _, cmodel, cdata = self.get_casadi_pinn_model(gravity=np.array([0.0, -11.0, 0.0]))
+
+    #     # TODO: SKETCHY AF -> Should this be stored/loaded instead of being calculated on-the-fly??
+    #     # mean = tensor_to_dm(state_dict["func.residual_input_mean"])
+    #     # std  = tensor_to_dm(state_dict["func.residual_input_std"])
+    #     # z_n = (z - mean) / std
+    #     """
+    #     _, cmodel, cdata = self.get_casadi_pinn_model(gravity=np.array([0.0, -11.0, 0.0]))
+
+    #     nq, nv = cmodel.nq, cmodel.nv
+    #     q = ca.SX.sym("q", nq)
+    #     v = ca.SX.sym("v", nv) # qdot
+    #     tau = ca.SX.sym("tau", nv)
+
+    #     # ----------- Nominal Dynamics -----------
+    #     nominal_qdd = cpin.aba(cmodel, cdata, q, v, tau)
+
+    #     # ----------- Residual Dynamics -----------
+    #     # TODO: Check us, were are sketchy and ai
+    #     state_dict, _ = load_state_dict_from_run(self.run_dir, epoch=self.knode_epoch)
+    #     params = [
+    #         tensor_to_dm(state_dict[f"func.residual_dynamics_network.{i}.{attr}"])
+    #         for i in (0, 2, 4, 6)
+    #         for attr in ("weight", "bias")
+    #     ]
+
+    #     # TODO: Hardcoded for 2 hidden layers -> FIXME later
+    #     h = ca.tanh(ca.mtimes(params[0], q) + params[1])
+    #     h = ca.tanh(ca.mtimes(params[2], h) + params[3])
+    #     h = ca.tanh(ca.mtimes(params[4], h) + params[5])
+    #     residual_qdd = ca.mtimes(params[6], h) + params[7]
+
+    #     qdd = nominal_qdd + residual_qdd
+
+    #     xdot = ca.vertcat(v, qdd)
+    #     x = ca.vertcat(q, v)
+    #     u = tau
+
+    #     # f = ca.Function("f", [x, u], [xdot])
+    #     # intg = ca.integrator(
+    #     #     "intg", "rk",
+    #     #     {"x": x, "p": u, "ode": f(x, u)},
+    #     #     dict(tf=self.dt, simplify=True, number_of_finite_elements=1),
+    #     # )
+
+    #     # return ca.Function("F", [x, u], [intg(x0=x, p=u)["xf"]])
+
+    #     x_next = x + xdot * self.dt
+    #     return ca.Function("F", [x, u], [x_next])
+
     def get_knode(self):
         """
-        Perfect/Imperfect nominal + Residual network
-
-        ----------------------------------------------------------------------
-        NOTE: Designed for residual qdd and not residual tau
-        ----------------------------------------------------------------------
-
-        Residual KNODE model (epoch=-1 -> latest checkpoint)
-
-        TODO: Doesn't support input normalization yet like the previous knode model used
-        TODO: Try L4CasADi later
-
-        NOTE: Previous imperfect thingy, not I use gravity
-        g = cpin.computeGeneralizedGravity(cmodel, cdata, q)
-        qdd = cpin.aba(cmodel, cdata, q, v, tau + g)
-
-        Only plant should do this
-        _, cmodel, cdata = self.get_casadi_pinn_model(gravity=np.array([0.0, -11.0, 0.0]))
-
-        # TODO: SKETCHY AF -> Should this be stored/loaded instead of being calculated on-the-fly??
-        # mean = tensor_to_dm(state_dict["func.residual_input_mean"])
-        # std  = tensor_to_dm(state_dict["func.residual_input_std"])
-        # z_n = (z - mean) / std
+        Perfect/Imperfect nominal + Residual network.
+        CasADi KNODE fixes.
         """
         _, cmodel, cdata = self.get_casadi_pinn_model(gravity=np.array([0.0, -11.0, 0.0]))
-
         nq, nv = cmodel.nq, cmodel.nv
-        q = ca.SX.sym("q", nq)
-        v = ca.SX.sym("v", nv) # qdot
-        tau = ca.SX.sym("tau", nv)
 
-        # ----------- Nominal Dynamics -----------
-        nominal_qdd = cpin.aba(cmodel, cdata, q, v, tau)
+        q_sx = ca.SX.sym("q", nq)
+        v_sx = ca.SX.sym("v", nv) # qdot
+        tau_sx = ca.SX.sym("tau", nv)
+        
+        x_sx = ca.vertcat(q_sx, v_sx)
+        u_sx = tau_sx
+
+        nominal_qdd = cpin.aba(cmodel, cdata, q_sx, v_sx, tau_sx)
+        nominal_xdot = ca.vertcat(v_sx, nominal_qdd)
+        aba_f = ca.Function("aba_f", [x_sx, u_sx], [nominal_xdot])
 
         # ----------- Residual Dynamics -----------
-        # TODO: Check us, were are sketchy and ai
         state_dict, _ = load_state_dict_from_run(self.run_dir, epoch=self.knode_epoch)
+        nn_forward, nn_jacobian = self._load_residual_nn_numpy(state_dict)
+        self.nn_cb = ResidualNNCallback(nn_forward, nn_jacobian)
+
+        x = ca.MX.sym("x", self.nx)
+        u = ca.MX.sym("u", self.nu)
+        q = x[:2]
+
+        nominal_xdot_mx = aba_f(x, u) # Function call node — fast AD
+        residual_qdd_mx = self.nn_cb(q) # Callback node — numeric AD
+        
+        xdot = nominal_xdot_mx + ca.vertcat(0, 0, residual_qdd_mx)
+
+        x_next = x + xdot * self.dt
+        return ca.Function("F", [x, u], [x_next])
+
+    def _load_residual_nn_numpy(self, state_dict):
+        """Returns forward(q) and jacobian(q) callables."""
         params = [
-            tensor_to_dm(state_dict[f"func.residual_dynamics_network.{i}.{attr}"])
+            state_dict[f"func.residual_dynamics_network.{i}.{attr}"].detach().cpu().numpy()
             for i in (0, 2, 4, 6)
             for attr in ("weight", "bias")
         ]
 
-        # TODO: Hardcoded for 2 hidden layers -> FIXME later
-        h = ca.tanh(ca.mtimes(params[0], q) + params[1])
-        h = ca.tanh(ca.mtimes(params[2], h) + params[3])
-        h = ca.tanh(ca.mtimes(params[4], h) + params[5])
-        residual_qdd = ca.mtimes(params[6], h) + params[7]
+        W0, b0, W2, b2, W4, b4, W6, b6 = params
 
-        qdd = nominal_qdd + residual_qdd
+        def forward(q):
+            q = np.asarray(q, dtype=np.float64).reshape(2)
+            h = np.tanh(W0 @ q + b0)
+            h = np.tanh(W2 @ h + b2)
+            h = np.tanh(W4 @ h + b4)
+            return W6 @ h + b6 # shape (2,)
 
-        xdot = ca.vertcat(v, qdd)
-        x = ca.vertcat(q, v)
-        u = tau
+        def _torch_forward(qq, layers):
+            h = qq.reshape(2)
+            for W, b in layers[:-1]:
+                Wt = torch.as_tensor(W, dtype=torch.float64)
+                bt = torch.as_tensor(b, dtype=torch.float64)
+                h = torch.tanh(Wt @ h + bt)
+            W, b = layers[-1]
+            Wt = torch.as_tensor(W, dtype=torch.float64)
+            bt = torch.as_tensor(b, dtype=torch.float64)
+            return Wt @ h + bt
 
-        f = ca.Function("f", [x, u], [xdot])
-        intg = ca.integrator(
-            "intg", "rk",
-            {"x": x, "p": u, "ode": f(x, u)},
-            dict(tf=self.dt, simplify=True, number_of_finite_elements=4),
-        )
+        def jacobian(q):
+            q_t = torch.tensor(q, dtype=torch.float64, requires_grad=True).reshape(2)
+            layers = [(W0, b0), (W2, b2), (W4, b4), (W6, b6)]
+            h = q_t
+            for i, (W, b) in enumerate(layers[:-1]):
+                h = torch.tanh(torch.tensor(W, dtype=torch.float64) @ h + torch.tensor(b, dtype=torch.float64))
+            
+            W, b = layers[-1]
+            out = torch.tensor(W, dtype=torch.float64) @ h + torch.tensor(b, dtype=torch.float64)
+            J = torch.autograd.functional.jacobian(lambda qq: _torch_forward(qq, layers), q_t) # TODO: Check me
+            return J.detach().numpy() # shape (2, 2)
 
-        return ca.Function("F", [x, u], [intg(x0=x, p=u)["xf"]])
+        return forward, jacobian

@@ -91,8 +91,8 @@ def train_model(model, train_data, test_data):
         if epoch % 150 == 0:
             save_model_checkpoint(model, epoch)
 
-            y_hat_open_loop = evaluate_model(model, test_data, open_loop=True)
-            y_hat_stepwise = evaluate_model(model, test_data, open_loop=False)
+            y_hat_open_loop, nominal_qdd_log_open_loop, residual_qdd_log_open_loop, total_qdd_log_open_loop = evaluate_model(model, test_data, open_loop=True)
+            y_hat_stepwise, nominal_qdd_log_stepwise, residual_qdd_log_stepwise, total_qdd_log_stepwise = evaluate_model(model, test_data, open_loop=False)
 
             # For plotting purposes: Same shape (t, q, qdot, u) and numpy type
             t_col = torch.as_tensor(test_data[:, :1], dtype=y_hat_open_loop.dtype)
@@ -101,8 +101,20 @@ def train_model(model, train_data, test_data):
             y_hat_stepwise = torch.cat([t_col, y_hat_stepwise], dim=1).detach().numpy()
 
             test_data_steps = len(test_data)
-            plot_trajectory_comparison(y_hat_open_loop, test_data, dt=model.step_size, label=f"{epoch}_openloop", max_steps=test_data_steps, show=False)
-            plot_trajectory_comparison(y_hat_stepwise, test_data, dt=model.step_size, label=f"{epoch}_stepwise", max_steps=test_data_steps, show=False)
+            plot_trajectory_comparison(
+                y_hat_open_loop, test_data, dt=model.step_size, label=f"{epoch}_openloop",
+                max_steps=test_data_steps, show=False,
+                nominal_qdd_log=nominal_qdd_log_open_loop,
+                residual_qdd_log=residual_qdd_log_open_loop,
+                total_qdd_log=total_qdd_log_open_loop,
+            )
+            plot_trajectory_comparison(
+                y_hat_stepwise, test_data, dt=model.step_size, label=f"{epoch}_stepwise",
+                max_steps=test_data_steps, show=False,
+                nominal_qdd_log=nominal_qdd_log_stepwise,
+                residual_qdd_log=residual_qdd_log_stepwise,
+                total_qdd_log=total_qdd_log_stepwise,
+            )
 
             # TODO: FIX US -> Not feasible using this
             # video_path = save_pinocchio_simulation_video(y_hat_open_loop, dt=model.step_size, fps=500, max_steps=test_data_steps, label=f"{epoch}_openloop")

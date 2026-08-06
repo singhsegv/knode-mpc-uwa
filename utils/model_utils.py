@@ -48,6 +48,11 @@ def evaluate_model(model, test_data, open_loop=True):
     open_loop=False -> Single step rollout comparison.
     """
     with torch.no_grad():
+        # qddot plotting purposes
+        nominal_qdd_log = []
+        residual_qdd_log = []
+        total_qdd_log = []
+
         model.eval()
 
         test_data = torch.tensor(test_data, dtype=DTYPE)
@@ -62,11 +67,24 @@ def evaluate_model(model, test_data, open_loop=True):
 
         current_state = eval_labels[0].unsqueeze(0) # (1, 6)
         for t in range(1, N):
-            # TODO: Needs to be changed for multi step lookaheads comparisons
             pred = model(current_state, step_times) # (2, 1, 6) ODE thingy for timesteps
             predicted_state = pred[-1, 0].clone() # (6,)
             predicted_state[4:6] = eval_labels[t, 4:6] # Model gives q, qdot; torque comes from dataset at time t
             y_hat[t] = predicted_state
+
+            # ------------------------------------------------------------
+            # dynamics data plotting
+            x, xdot, u = current_state[:, 0:2], current_state[:, 2:4], current_state[:, 4:]
+            nominal_qddot = model.func.compute_nominal(x, xdot, u) # (1, 6) but useless tau and qdot
+            residual_temp = model.func.residual_dynamics_network(x) # qddot only
+            zeros = torch.zeros(current_state.shape[0], 2, dtype=current_state.dtype, device=current_state.device)
+            residual_qddot = torch.cat([zeros, residual_temp, zeros], dim=1) # (1, 6) but useless tau and qdot
+            total_qddot = nominal_qddot + residual_qddot
+
+            nominal_qdd_log.append(nominal_qddot.cpu().numpy())
+            residual_qdd_log.append(residual_qddot.cpu().numpy())
+            total_qdd_log.append(total_qddot.cpu().numpy())
+            # ------------------------------------------------------------
 
             # NOTE: This is the only difference
             if open_loop:
@@ -108,7 +126,7 @@ def evaluate_model(model, test_data, open_loop=True):
         # print(f"MSE(q):    {mse_q.item():.6e}  [rad^2]")
         # print(f"MSE(qdot): {mse_qd.item():.6e}  [(rad/s)^2]")
     
-    return y_hat
+    return y_hat, nominal_qdd_log, residual_qdd_log, total_qdd_log
 
 
 def evaluate_horizon_loss(model, test_data, horizon):

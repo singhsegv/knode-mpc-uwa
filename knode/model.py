@@ -74,10 +74,15 @@ class PlanarArmODEFunc(nn.Module):
             xdot_np = xdot[idx].detach().cpu().numpy()
             u_np = u[idx].detach().cpu().numpy()
 
-            if self.perfect_nominal:
-                qdot, qddot = self.robot.get_nominal_dynamics(x_np, xdot_np, u_np)
-            else:
-                qdot, qddot = self.robot.get_imperfect_dynamics(x_np, xdot_np, u_np)
+            # NOTE: Changed now for testing MPC with gravity -9.81 vs something else
+            # NOTE: Robot object handles the calculations
+
+            # if self.perfect_nominal:
+            #     qdot, qddot = self.robot.get_nominal_dynamics(x_np, xdot_np, u_np)
+            # else:
+            #     qdot, qddot = self.robot.get_imperfect_dynamics(x_np, xdot_np, u_np)
+            
+            qdot, qddot = self.robot.get_nominal_dynamics(x_np, xdot_np, u_np)
             
             # Controls are held constant -> output[idx, 4:] = 0
             output[idx, 0:2] = qdot
@@ -119,10 +124,15 @@ class PlanarArmKnodeModel(nn.Module):
         perfect_nominal: Perfect or Imperfect nominal model
         """
         super().__init__()
-        self.robot = PlanarArm()
+
         self.step_size = model_cfg.get("step_size", 0.002)
         self.nominal_only = model_cfg.get("nominal_only", False)
         self.perfect_nominal = model_cfg.get("perfect_nominal", False)
+
+        if self.perfect_nominal:
+            self.robot = PlanarArm()
+        else:
+            self.robot = PlanarArm(gravity=np.array([0.0, -11.0, 0.0]))
 
         self.func = PlanarArmODEFunc(robot=self.robot, model_cfg=model_cfg)
         
@@ -148,6 +158,7 @@ class PlanarArmKnodeModel(nn.Module):
             )
             current = segment[-1]
             states.append(current)
+
         return torch.stack(states, dim=0)
 
     def forward(self, y0, timesteps=None, step_torques=None):

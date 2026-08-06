@@ -41,13 +41,16 @@ def pinocchio_simulate_trajectory(states, dt=0.002):
 
 def plot_trajectory_comparison(
         y_hat, ground_truth, dt=0.002, label=None, max_steps=None, output_dir=None,
-        show=False, record_video=True, video_fps=30
+        show=False, record_video=True, video_fps=30,
+        nominal_qdd_log=None, residual_qdd_log=None, total_qdd_log=None,
     ):
     """
     Compare predicted rollout vs ground truth in joint and task space.
 
     y_hat: (N, 7) predicted [t, q, qdot, tau]
     ground_truth: (N, 7) [t, q, qdot, tau]
+    nominal_qdd_log, residual_qdd_log, total_qdd_log: optional lists of (1, 6)
+        dynamics vectors from evaluate_model; qddot at indices 2:4.
     """
     if output_dir is None:
         output_dir = DEFAULT_OUTPUT_DIR
@@ -71,8 +74,14 @@ def plot_trajectory_comparison(
     xy_pred = robot.ee_positions(q_pred)
     xy_true = robot.ee_positions(q_true)
 
-    fig, axes = plt.subplots(3, 2, figsize=(12, 10), sharex=True)
-    fig.suptitle(f"Trajectory comparison", fontsize=13)
+    plot_qddot = (
+        nominal_qdd_log is not None
+        and residual_qdd_log is not None
+        and total_qdd_log is not None
+    )
+    n_rows = 6 if plot_qddot else 3
+    fig, axes = plt.subplots(n_rows, 2, figsize=(12, 2.8 * n_rows), sharex=True)
+    fig.suptitle("Trajectory comparison", fontsize=13)
 
     joint_labels = ["q1", "q2"]
     for i in range(2):
@@ -80,7 +89,6 @@ def plot_trajectory_comparison(
         ax.plot(time, q_true[:, i], "g--", label="ground truth", linewidth=1.2)
         ax.plot(time, q_pred[:, i], "r--", label="model rollout", linewidth=1.2)
         ax.set_ylabel(joint_labels[i])
-        ax.set_xlabel("time [s]")
         ax.tick_params(labelbottom=True)
         ax.grid(True, alpha=0.3)
         if i == 0:
@@ -92,18 +100,41 @@ def plot_trajectory_comparison(
         ax.plot(time, qdot_true[:, i], "g--", label="ground truth", linewidth=1.2)
         ax.plot(time, qdot_pred[:, i], "r--", label="model rollout", linewidth=1.2)
         ax.set_ylabel(qdot_labels[i])
-        ax.set_xlabel("time [s]")
         ax.tick_params(labelbottom=True)
         ax.grid(True, alpha=0.3)
 
+    task_row = 2
+    if plot_qddot:
+        nominal_qdd = _to_numpy(nominal_qdd_log)[:, 0, 2:4]
+        residual_qdd = _to_numpy(residual_qdd_log)[:, 0, 2:4]
+        total_qdd = _to_numpy(total_qdd_log)[:, 0, 2:4]
+        n_qdd = min(n - 1, len(nominal_qdd))
+        qdd_time = time[1:n_qdd + 1]
+
+        qddot_rows = [
+            (nominal_qdd, "nominal qddot1", "nominal qddot2", "C0"),
+            (residual_qdd, "residual qddot1", "residual qddot2", "C1"),
+            (total_qdd, "total qddot1", "total qddot2", "C3"),
+        ]
+        for row_offset, (qdd_data, label0, label1, color) in enumerate(qddot_rows):
+            row = 2 + row_offset
+            for i, ylabel in enumerate([label0, label1]):
+                ax = axes[row, i]
+                ax.plot(qdd_time, qdd_data[:n_qdd, i], color=color, linewidth=1.2)
+                ax.set_ylabel(ylabel)
+                ax.grid(True, alpha=0.3)
+        task_row = 5
+
     task_labels = ["x", "y"]
     for i in range(2):
-        ax = axes[2, i]
+        ax = axes[task_row, i]
         ax.plot(time, xy_true[:, i], "g--", label="ground truth", linewidth=1.5)
         ax.plot(time, xy_pred[:, i], "r--", label="model rollout", linewidth=1.2)
-        ax.set_xlabel("time [s]")
         ax.set_ylabel(task_labels[i])
         ax.grid(True, alpha=0.3)
+
+    for ax in axes[-1, :]:
+        ax.set_xlabel("time [s]")
 
     fig.tight_layout()
 

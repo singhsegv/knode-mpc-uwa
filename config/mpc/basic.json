@@ -1,0 +1,23 @@
+{
+    "name": "basic",
+    "description": "Sanity check",
+    "dt": 0.01,
+    "trajectories": [
+        {
+            "type": "lemniscate",
+            "duration": 15.0,
+            "omega": 0.5,
+            "cx": 0.0,
+            "cy": 1.2,
+            "a": 0.5
+        },
+        {
+            "type": "circle",
+            "duration": 10.0,
+            "omega": 1.0,
+            "cx": 0.4,
+            "cy": 1.4,
+            "r": 0.2
+        }
+    ]
+}

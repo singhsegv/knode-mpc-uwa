@@ -4,3 +4,4 @@ archive-runs-data/
 .DS_Store
 runs/
 **/**/*.png
+benchmark_outputs/

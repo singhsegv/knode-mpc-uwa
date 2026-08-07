@@ -128,10 +128,10 @@ def run_closed_loop_mpc(knode_path=None):
     DT = 0.01 # 100hz
     current_time = 0.0
     SIM_TIME = 10.0
-    MPC_HORIZON = 50
+    MPC_HORIZON = 25
 
-    plant, mpc = get_plant_and_controller(dt=DT, mpc_horizon=MPC_HORIZON, enable_knode=False)
-    # plant, mpc = get_plant_and_controller(dt=DT, mpc_horizon=MPC_HORIZON, enable_knode=True, knode_path=knode_path)
+    # plant, mpc = get_plant_and_controller(dt=DT, mpc_horizon=MPC_HORIZON, enable_knode=False)
+    plant, mpc = get_plant_and_controller(dt=DT, mpc_horizon=MPC_HORIZON, enable_knode=True, knode_path=knode_path)
     
     q0, _ = inverse_kinematics(plant, plant.get_random_config(), 0.7, 0.5, 0.0, 0.0)
     plant.move_to(q0)
@@ -176,8 +176,8 @@ def run_closed_loop_mpc(knode_path=None):
 
 
 if __name__ == "__main__":
-    # knode_path = "/Users/singhsegv/upenn-research-scalar/implementations/learning-manipulator-dynamics/knode-mpc-planar-arm/runs/20260806_182235_small_focussed_circle_basic1_mpc-test"
-    knode_path = "lala"
+    knode_path = "/Users/singhsegv/upenn-research-scalar/implementations/learning-manipulator-dynamics/knode-mpc-planar-arm/runs/20260806_182235_small_focussed_circle_basic1_mpc-test"
+    # knode_path = "lala"
     image_save_path = "/Users/singhsegv/upenn-research-scalar/implementations/learning-manipulator-dynamics/knode-mpc-planar-arm/mpc/perfect.png"
 
     history_x, history_u, dt = run_closed_loop_mpc(knode_path)

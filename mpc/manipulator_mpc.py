@@ -17,8 +17,10 @@ from casadi_knode_callback import ResidualNNCallback
 
 
 def tensor_to_dm(t):
-    """torch tensor -> CasADi DM."""
-    return ca.DM(t.detach().cpu().numpy())
+    """Array-like -> CasADi DM."""
+    if hasattr(t, "detach"):
+        t = t.detach().cpu().numpy()
+    return ca.DM(t)
 
 
 class ManipulatorControl:
@@ -33,6 +35,8 @@ class ManipulatorControl:
         self.nx = 4
         self.nu = 2
 
+        self.enable_knode = enable_knode
+
         if enable_knode:
             if run_dir is None:
                 raise ValueError("run_dir is required when enable_knode=True")
@@ -44,8 +48,15 @@ class ManipulatorControl:
             self.dynamics = self.get_nominal()
 
         self.opti = ca.Opti()
-        self.X = self.opti.variable(4, self.mpc_horizon + 1)
-        self.U = self.opti.variable(2, self.mpc_horizon)
+
+        # From a single matrix to a list of opti variable
+        self.X = []
+        self.U = []
+        for k in range(self.mpc_horizon):
+            self.X.append(self.opti.variable(self.nx, 1))
+            self.U.append(self.opti.variable(self.nu, 1))
+
+        self.X.append(self.opti.variable(self.nx, 1))
 
         self.x0 = self.opti.parameter(self.nx, 1)
         self.X_ref = self.opti.parameter(self.nx, self.mpc_horizon + 1)
@@ -63,37 +74,35 @@ class ManipulatorControl:
         Q = np.diag([100.0, 100.0, 100.0, 100.0]) # state penalty
         R = np.diag([0.01, 0.01]) # control errors
 
-        for k in range(self.mpc_horizon):
-            self.opti.subject_to(self.X[:, k+1] == self.dynamics(self.X[:, k], self.U[:, k]))
+        self.opti.subject_to(self.X[0] == self.x0)
 
-            # Tracking cost
-            tracking_error = self.X[:, k] - self.X_ref[:, k]
+        for k in range(self.mpc_horizon):
+            tracking_error = self.X[k] - self.X_ref[:, k:k+1]
             cost += ca.mtimes([tracking_error.T, Q, tracking_error])
-            cost += ca.mtimes([self.U[:, k].T, R, self.U[:, k]])
-            # cost += ca.sumsqr(X[:, k] - X_ref[:, k]) + 1e-3 * ca.sumsqr(U[:, k])
+            cost += ca.mtimes([self.U[k].T, R, self.U[k]])
+
+            self.opti.subject_to(self.X[k+1] == self.dynamics(self.X[k], self.U[k]))
+            self.opti.subject_to(self.opti.bounded(-100, self.U[k], 100))
             
-        # Terminal cost
-        terminal_error = self.X[:, self.mpc_horizon] - self.X_ref[:, self.mpc_horizon]
-        cost += ca.mtimes([terminal_error.T, Q * 10, terminal_error])
-        # cost += 10 * ca.sumsqr(X[:, self.mpc_horizon] - X_ref[:, self.mpc_horizon])
+        terminal_error = self.X[self.mpc_horizon] - self.X_ref[self.mpc_horizon]
+        cost += ca.mtimes([terminal_error.T, Q * 25, terminal_error])
 
         self.opti.minimize(cost)
-        self.opti.subject_to(self.X[:, 0] == self.x0)
-        self.opti.subject_to(self.opti.bounded(-100, self.U, 100))
 
-        # expand=True inlines the full symbolic graph and can use 10+ GB when
-        # Pinocchio ABA + MLP is chained over the MPC horizon.
-
-        p_opts = {"expand": False, "print_time": False}
-        s_opts = {
-            "max_iter": 100,
-            "print_level": 0,
-            "print_user_options": "no",
-            "print_timing_statistics": "no",
-            "tol": 1e-4,
-            "hessian_approximation": "limited-memory",
+        plugin_opts = {
+            "print_time": False,
+            "verbose": False,
+            "debug": False,
+            "jit": False,
+            "fatrop": {
+                "print_level": 0,
+            },
         }
-        self.opti.solver("ipopt", p_opts, s_opts)
+        solver_opts = {
+            "print_level": 0,
+        }
+
+        self.opti.solver("fatrop", plugin_opts, solver_opts)
 
     def solve(self, current_state, reference_horizon, u_guess=None):
         """ Called every control loop to get the next optimal torque. """
@@ -101,14 +110,20 @@ class ManipulatorControl:
         self.opti.set_value(self.X_ref, reference_horizon)
 
         if u_guess is not None:
-            self.opti.set_initial(self.U, u_guess)
+            for k in range(self.mpc_horizon):
+                self.opti.set_initial(self.U[k], u_guess[:, k])
 
         try:
             sol = self.opti.solve()
-            return sol.value(self.U), sol.value(self.X)
-        except:
-            print("Solver failed to converge! Returning suboptimal/last known torques.")
-            return self.opti.debug.value(self.U), self.opti.debug.value(self.X)
+
+            # FIX: Use column_stack to build a 2D matrix (dim x horizon)
+            U_optimal = np.column_stack([sol.value(u).flatten() for u in self.U])
+            X_predicted = np.column_stack([sol.value(x).flatten() for x in self.X])
+            
+            return U_optimal, X_predicted
+        except Exception as e:
+            print(f"Solver failed: {e}")
+            raise
 
     def get_casadi_pinn_model(self, gravity=np.array([0.0, -9.81, 0.0])):
         model = pin.buildModelFromUrdf(self.urdf_path)
@@ -119,7 +134,8 @@ class ManipulatorControl:
 
     def get_nominal(self):
         """ Perfect/Imperfect nominal models based on Pinocchio.CasADi. """
-        _, cmodel, cdata = self.get_casadi_pinn_model(gravity=np.array([0.0, -11.0, 0.0]))
+        # _, cmodel, cdata = self.get_casadi_pinn_model(gravity=np.array([0.0, -11.0, 0.0]))
+        _, cmodel, cdata = self.get_casadi_pinn_model()
 
         # TODO: MX or SX ??
         nq, nv = cmodel.nq, cmodel.nv
@@ -217,16 +233,15 @@ class ManipulatorControl:
 
     def get_knode(self):
         """
-        Perfect/Imperfect nominal + Residual network.
-        CasADi KNODE fixes.
+        Nominal Pinocchio dynamics plus residual MLP via Callback.
         """
         _, cmodel, cdata = self.get_casadi_pinn_model(gravity=np.array([0.0, -11.0, 0.0]))
         nq, nv = cmodel.nq, cmodel.nv
 
         q_sx = ca.SX.sym("q", nq)
-        v_sx = ca.SX.sym("v", nv) # qdot
+        v_sx = ca.SX.sym("v", nv)
         tau_sx = ca.SX.sym("tau", nv)
-        
+
         x_sx = ca.vertcat(q_sx, v_sx)
         u_sx = tau_sx
 
@@ -234,25 +249,23 @@ class ManipulatorControl:
         nominal_xdot = ca.vertcat(v_sx, nominal_qdd)
         aba_f = ca.Function("aba_f", [x_sx, u_sx], [nominal_xdot])
 
-        # ----------- Residual Dynamics -----------
         state_dict, _ = load_state_dict_from_run(self.run_dir, epoch=self.knode_epoch)
-        nn_forward, nn_jacobian = self._load_residual_nn_numpy(state_dict)
-        self.nn_cb = ResidualNNCallback(nn_forward, nn_jacobian)
+        nn_forward, nn_jacobian, nn_jacobian_forward = self._load_residual_nn_numpy(state_dict)
+        self.nn_cb = ResidualNNCallback(nn_forward, nn_jacobian, nn_jacobian_forward)
 
         x = ca.MX.sym("x", self.nx)
         u = ca.MX.sym("u", self.nu)
         q = x[:2]
 
-        nominal_xdot_mx = aba_f(x, u) # Function call node — fast AD
-        residual_qdd_mx = self.nn_cb(q) # Callback node — numeric AD
-        
+        nominal_xdot_mx = aba_f(x, u)
+        residual_qdd_mx = self.nn_cb(q)
         xdot = nominal_xdot_mx + ca.vertcat(0, 0, residual_qdd_mx)
 
         x_next = x + xdot * self.dt
         return ca.Function("F", [x, u], [x_next])
 
     def _load_residual_nn_numpy(self, state_dict):
-        """Returns forward(q) and jacobian(q) callables."""
+        """Returns forward(q), jacobian(q), and jacobian_forward(q, q_dot)."""
         params = [
             state_dict[f"func.residual_dynamics_network.{i}.{attr}"].detach().cpu().numpy()
             for i in (0, 2, 4, 6)
@@ -266,29 +279,34 @@ class ManipulatorControl:
             h = np.tanh(W0 @ q + b0)
             h = np.tanh(W2 @ h + b2)
             h = np.tanh(W4 @ h + b4)
-            return W6 @ h + b6 # shape (2,)
+            return W6 @ h + b6
 
-        def _torch_forward(qq, layers):
+        def _torch_forward(qq):
             h = qq.reshape(2)
-            for W, b in layers[:-1]:
-                Wt = torch.as_tensor(W, dtype=torch.float64)
-                bt = torch.as_tensor(b, dtype=torch.float64)
-                h = torch.tanh(Wt @ h + bt)
-            W, b = layers[-1]
-            Wt = torch.as_tensor(W, dtype=torch.float64)
-            bt = torch.as_tensor(b, dtype=torch.float64)
-            return Wt @ h + bt
+            h = torch.tanh(torch.as_tensor(W0, dtype=torch.float64) @ h + torch.as_tensor(b0, dtype=torch.float64))
+            h = torch.tanh(torch.as_tensor(W2, dtype=torch.float64) @ h + torch.as_tensor(b2, dtype=torch.float64))
+            h = torch.tanh(torch.as_tensor(W4, dtype=torch.float64) @ h + torch.as_tensor(b4, dtype=torch.float64))
+            return torch.as_tensor(W6, dtype=torch.float64) @ h + torch.as_tensor(b6, dtype=torch.float64)
 
         def jacobian(q):
             q_t = torch.tensor(q, dtype=torch.float64, requires_grad=True).reshape(2)
-            layers = [(W0, b0), (W2, b2), (W4, b4), (W6, b6)]
-            h = q_t
-            for i, (W, b) in enumerate(layers[:-1]):
-                h = torch.tanh(torch.tensor(W, dtype=torch.float64) @ h + torch.tensor(b, dtype=torch.float64))
-            
-            W, b = layers[-1]
-            out = torch.tensor(W, dtype=torch.float64) @ h + torch.tensor(b, dtype=torch.float64)
-            J = torch.autograd.functional.jacobian(lambda qq: _torch_forward(qq, layers), q_t) # TODO: Check me
-            return J.detach().numpy() # shape (2, 2)
+            J = torch.autograd.functional.jacobian(_torch_forward, q_t)
+            return J.detach().numpy()
 
-        return forward, jacobian
+        def jacobian_forward(q, q_dot):
+            q = np.asarray(q, dtype=np.float64).reshape(2)
+            q_dot = np.asarray(q_dot, dtype=np.float64).reshape(2)
+            q_t = torch.tensor(q, dtype=torch.float64, requires_grad=True)
+            q_dot_t = torch.tensor(q_dot, dtype=torch.float64)
+
+            J_dot = np.zeros((2, 2))
+            for i in range(2):
+                for j in range(2):
+                    def Jij(qq):
+                        return torch.autograd.functional.jacobian(_torch_forward, qq)[i, j]
+
+                    _, dJij = torch.autograd.functional.jvp(Jij, q_t, q_dot_t)
+                    J_dot[i, j] = dJij.item()
+            return J_dot
+
+        return forward, jacobian, jacobian_forward

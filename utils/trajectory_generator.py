@@ -60,4 +60,45 @@ def line_trajectory(t, x0, y0, x1, y1, omega=0.3):
     xddot = -dx * omega**2 * s
     yddot = -dy * omega**2 * s
     return x, y, xdot, ydot, xddot, yddot
-    
+
+
+def rectangle_trajectory(t, x0, y0, x1, y1, omega=0.3):
+    """
+    Trace the perimeter of an axis-aligned rectangle defined by opposite corners
+    (x0, y0) and (x1, y1), clockwise from (x_min, y_min). One full loop takes 4/omega seconds.
+    """
+    x_min = min(x0, x1)
+    x_max = max(x0, x1)
+    y_min = min(y0, y1)
+    y_max = max(y0, y1)
+    w = x_max - x_min
+    h = y_max - y_min
+
+    phi = (omega * t) % 4.0
+
+    if phi < 1.0:
+        u = phi
+        x = x_min
+        y = y_min + u * h
+        x_phi, y_phi = 0.0, h
+    elif phi < 2.0:
+        u = phi - 1.0
+        x = x_min + u * w
+        y = y_max
+        x_phi, y_phi = w, 0.0
+    elif phi < 3.0:
+        u = phi - 2.0
+        x = x_max
+        y = y_max - u * h
+        x_phi, y_phi = 0.0, -h
+    else:
+        u = phi - 3.0
+        x = x_max - u * w
+        y = y_min
+        x_phi, y_phi = -w, 0.0
+
+    xdot = x_phi * omega
+    ydot = y_phi * omega
+    xddot = 0.0
+    yddot = 0.0
+    return x, y, xdot, ydot, xddot, yddot

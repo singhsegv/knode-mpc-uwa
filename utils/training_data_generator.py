@@ -22,7 +22,7 @@ from robots.simulator import PlanarArm
 from knode.model import PlanarArmKnodeModel
 import utils.model_utils as model_utils
 from utils.model_utils import latest_checkpoint_epoch, load_model_checkpoint
-from utils.trajectory_generator import circle_trajectory, lemniscate_trajectory, line_trajectory
+from utils.trajectory_generator import circle_trajectory, lemniscate_trajectory, line_trajectory, rectangle_trajectory
 
 # Common thingy for all functions
 robot = PlanarArm(enable_viz=False)
@@ -143,6 +143,7 @@ def collect(duration, trajectory, cx, cy, omega, a=None, r=None, lx0=None, ly0=N
     Circle: cx, cy, r
     Lemniscate: cx, cy, a
     Line: lx0, ly0, lx1, ly1
+    Rectangle: lx0, ly0, lx1, ly1
     """
     n_steps = int(duration / dt)
     t_log = np.empty(n_steps)
@@ -158,8 +159,12 @@ def collect(duration, trajectory, cx, cy, omega, a=None, r=None, lx0=None, ly0=N
         x_start, y_start = 0.5 * (lx0 + lx1), 0.5 * (ly0 + ly1)
     elif trajectory == "circle":
         x_start, y_start = cx + r, cy
+    elif trajectory == "lemniscate":
+        x_start, y_start = cx + a, cy
+    elif trajectory == "rectangle":
+        x_start, y_start, _, _, _, _ = rectangle_trajectory(0, lx0, ly0, lx1, ly1, omega=omega)
     else:
-        x_start, y_start = cx, cy
+        raise ValueError(f"Unknown trajectory type: {trajectory}")
 
     q_initial = fsolve(ik_residual, [0.5, 0.5], args=(x_start, y_start))
     robot.move_to(q_initial)
@@ -182,6 +187,8 @@ def collect(duration, trajectory, cx, cy, omega, a=None, r=None, lx0=None, ly0=N
             x, y, xdot, ydot, xddot, yddot = lemniscate_trajectory(t, a=a, cx=cx, cy=cy, omega=omega)
         elif trajectory == "line":
             x, y, xdot, ydot, xddot, yddot = line_trajectory(t, lx0, ly0, lx1, ly1, omega=omega)
+        elif trajectory == "rectangle":
+            x, y, xdot, ydot, xddot, yddot = rectangle_trajectory(t, lx0, ly0, lx1, ly1, omega=omega)
 
         # Holding a static pose
         # x, y, xdot, ydot, xddot, yddot = cx, cy, 0.0, 0.0, 0.0, 0.0
@@ -340,6 +347,14 @@ def main():
         log = collect_from_spec(spec, enable_viz=args.viz, knode_model=model, dt=dt)
         save_log(output_path, log)
         print(f"Saved {len(log['t'])} samples at {1.0 / dt:.0f} Hz -> {output_path}")
+
+        plot_collected_trajectory(
+            t_log=log["t"], q_log=log["q"], qdot_log=log["qdot"],
+            qdd_fb_log=log["qdd_fb"], tau_log=log["tau"],
+            trajectory=log["meta"]["trajectory"],
+            max_steps=log["meta"]["n_steps"], show=False,
+            output_dir=os.path.dirname(output_path),
+        )
 
 
 if __name__ == "__main__":

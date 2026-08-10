@@ -12,6 +12,7 @@ import sys
 from datetime import datetime
 
 import torch
+import numpy as np
 
 from knode.learn import train_model
 from knode.model import PlanarArmKnodeModel
@@ -134,7 +135,7 @@ def main():
         test_data = test_rollouts[0] # TODO: FIX ME LATER
 
         # TODO: DATA AND NODE STEP_SIZE SHOULD MATCH
-        model = PlanarArmKnodeModel(model_cfg).to(torch.float64)
+        model = PlanarArmKnodeModel(model_cfg, gravity=np.array([-2.0, -12.0, 0.0])).to(torch.float64)
         train_model(model, train_data, test_data)
         
         print(f"Finished. Artifacts in {run_dir}")

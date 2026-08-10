@@ -195,11 +195,13 @@ def main():
     parser.add_argument("--output-dir", type=str, default=None, help="Directory for per-trajectory plots and stats.json")
     args = parser.parse_args()
 
+    knode_path = "/Users/singhsegv/upenn-research-scalar/implementations/learning-manipulator-dynamics/knode-mpc-planar-arm/runs/20260807_185634_generalization_training_basic1_gen-la-2-gravity2-12"
+
     config_path = os.path.join(DATASETS_DIR, f"{args.config}.json")
     run_closed_loop_mpc(
         config_path=config_path,
-        knode_path=args.knode_path,
-        enable_knode=not args.no_knode and args.knode_path is not None,
+        knode_path=knode_path,
+        enable_knode=True,
         mpc_horizon=args.mpc_horizon,
         output_dir=args.output_dir,
     )

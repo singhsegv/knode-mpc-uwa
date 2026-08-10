@@ -118,7 +118,7 @@ class PlanarArmKnodeModel(nn.Module):
     """
     Wrapper that integrates the planar arm dynamics over time.
     """
-    def __init__(self, model_cfg):
+    def __init__(self, model_cfg, gravity=np.array([0.0, -9.81, 0.0])):
         """
         nominal_only: Nominal can be perfect/imperfect -> This flag just removes the residual
         perfect_nominal: Perfect or Imperfect nominal model
@@ -132,7 +132,7 @@ class PlanarArmKnodeModel(nn.Module):
         if self.perfect_nominal:
             self.robot = PlanarArm()
         else:
-            self.robot = PlanarArm(gravity=np.array([0.0, -11.0, 0.0]))
+            self.robot = PlanarArm(gravity=gravity)
 
         self.func = PlanarArmODEFunc(robot=self.robot, model_cfg=model_cfg)
         

@@ -14,7 +14,7 @@
         {
             "type": "circle",
             "duration": 10.0,
-            "omega": 1.0,
+            "omega": 0.5,
             "cx": 0.4,
             "cy": 1.4,
             "r": 0.2

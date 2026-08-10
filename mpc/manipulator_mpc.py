@@ -74,7 +74,7 @@ class ManipulatorControl:
             
         # Terminal cost
         terminal_error = self.X[:, self.mpc_horizon] - self.X_ref[:, self.mpc_horizon]
-        cost += ca.mtimes([terminal_error.T, Q * 10, terminal_error])
+        cost += ca.mtimes([terminal_error.T, Q * 25, terminal_error])
         # cost += 10 * ca.sumsqr(X[:, self.mpc_horizon] - X_ref[:, self.mpc_horizon])
 
         self.opti.minimize(cost)
@@ -86,7 +86,7 @@ class ManipulatorControl:
 
         p_opts = {"expand": False, "print_time": False}
         s_opts = {
-            "max_iter": 100,
+            "max_iter": 300,
             "print_level": 0,
             "print_user_options": "no",
             "print_timing_statistics": "no",
@@ -119,7 +119,7 @@ class ManipulatorControl:
 
     def get_nominal(self):
         """ Perfect/Imperfect nominal models based on Pinocchio.CasADi. """
-        _, cmodel, cdata = self.get_casadi_pinn_model(gravity=np.array([0.0, -11.0, 0.0]))
+        _, cmodel, cdata = self.get_casadi_pinn_model(gravity=np.array([-2.0, -12.0, 0.0]))
 
         # TODO: MX or SX ??
         nq, nv = cmodel.nq, cmodel.nv
@@ -220,7 +220,7 @@ class ManipulatorControl:
         Perfect/Imperfect nominal + Residual network.
         CasADi KNODE fixes.
         """
-        _, cmodel, cdata = self.get_casadi_pinn_model(gravity=np.array([0.0, -11.0, 0.0]))
+        _, cmodel, cdata = self.get_casadi_pinn_model(gravity=np.array([-2.0, -12.0, 0.0]))
         nq, nv = cmodel.nq, cmodel.nv
 
         q_sx = ca.SX.sym("q", nq)

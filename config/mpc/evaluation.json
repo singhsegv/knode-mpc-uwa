@@ -23,7 +23,7 @@
         {
             "type": "circle",
             "duration": 10.0,
-            "omega": 2.5,
+            "omega": 1.5,
             "cx": -0.4,
             "cy": 1.4,
             "r": 0.05
@@ -31,7 +31,7 @@
         {
             "type": "circle",
             "duration": 10.0,
-            "omega": 2.5,
+            "omega": 2.0,
             "cx": -0.4,
             "cy": 1.4,
             "r": 0.2

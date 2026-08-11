@@ -2,8 +2,13 @@ name: planar-uwa
 channels:
   - https://repo.anaconda.com/pkgs/main
   - https://repo.anaconda.com/pkgs/r
+  - conda-forge
 dependencies:
   - python=3.10
   - pinocchio
   - pytorch
+  - pip
+  - pip:
+    - robot_descriptions
+    - xacrodoc
 prefix: /Users/singhsegv/miniconda3/envs/planar-uwa

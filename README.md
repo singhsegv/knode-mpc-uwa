@@ -1,27 +1,29 @@
-# Learning 2D Planar Arm Dynamics 
+# Learning 2D Planar Arm Dynamics
+
+## About
+Spawned from `main` branch but now with a full arm but same infra setup.
 
 ## Running Experiments
-```
-python run_experiment.py --dataset evaluation1 --model basic1
 
-# optional: --epochs 500 --lr 0.001
+```bash
+# UR5 full-arm pipeline
+python utils/training_data_generator.py --config ur5_demo --split both
+python run_experiment.py --dataset ur5_demo --model basic1 --robot ur5
 
-python run_experiment.py --dataset evaluation1 --model basic1 --name testing
+# Planar arm (legacy)
+python run_experiment.py --dataset evaluation1 --model basic1 --robot planar
 
-# Dataset Generation
-python utils/training_data_generator.py --viz --custom-dynamics
-
-# Comparing rollouts: EE positions and Tau
+# Comparing rollouts
 python utils/compare_collected_rollouts.py data/standalone data/other_run --save
 
-# Performance and Generalization [Standalone]
-python evaluate/benchmark_model.py --run 20260717_171819_evaluation1_basic1_comparison-la-100
+# Performance and generalization
 python evaluate/benchmark_model.py --run <run_name> --epoch 2100 --dataset benchmark_basic --plot
 ```
 
 
 ## Docs
 
+- [UR5 6-DOF Migration Guide](docs/ur6-migration.md)
 - [Learning on Manifolds — References & Reading Guide](docs/learning-on-manifolds.md)
 - [Training Performance — CUDA, GPU, and JAX](docs/training-performance-gpu-jax.md)
 - [Pinocchio Alternatives — Batched Dynamics for Training](docs/pinocchio-alternatives-batched-dynamics.md)

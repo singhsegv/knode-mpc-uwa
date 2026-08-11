@@ -15,13 +15,15 @@ import torch
 import numpy as np
 
 from knode.learn import train_model
-from knode.model import PlanarArmKnodeModel
+from knode.model import ManipulatorKnodeModel
 from utils.data_utils import load_data
 from utils.log_utils import Tee
-from utils.training_data_generator import collect_from_spec, save_log, plot_collected_trajectory
+from utils.training_data_generator import collect, save_log, plot_collected_trajectory
 import knode.learn as learn
 import utils.model_utils as model_utils
 import utils.visualize_trajectory as visualize_trajectory
+
+from robots.simulator import make_robot
 
 
 PROJECT_ROOT = os.path.dirname(os.path.abspath(__file__))
@@ -45,25 +47,27 @@ def data_dir_has_npz(data_dir):
     return any(name.endswith(".npz") for name in os.listdir(data_dir))
 
 
-def _generate_split(specs, split_dir, dt):
+def _generate_split(specs, split_dir, dt, robot):
     os.makedirs(split_dir, exist_ok=True)
     for i, spec in enumerate(specs):
         output_path = os.path.join(split_dir, f"{i:02d}_{spec['type']}.npz")
-        log = collect_from_spec(spec, enable_viz=False, dt=dt)
+        log = collect(spec, robot, enable_viz=False, dt=dt)
         save_log(output_path, log)
 
         plot_collected_trajectory(
             t_log=log["t"], q_log=log["q"], qdot_log=log["qdot"],
-            qdd_fb_log=log["qdd_fb"], tau_log=log["tau"],
-            trajectory=log["meta"]["trajectory"],
+            qdd_fb_log=log["qdd_fb"], tau_log=log["tau"], robot=robot,
+            label=f"{i:02d}_{spec['type']}",
+            trajectory=spec["type"],
             max_steps=log["meta"]["n_steps"], show=False,
             output_dir=os.path.dirname(output_path),
+            des_ee_pos=log["des_ee_pos"],
         )
 
         print(f"Saved {len(log['t'])} samples -> {output_path}")
 
 
-def ensure_dataset(dataset_cfg, data_dir):
+def ensure_dataset(dataset_cfg, data_dir, robot):
     """Generate train/test .npz files under data_dir if either split is missing."""
     train_dir = os.path.join(data_dir, "train")
     test_dir = os.path.join(data_dir, "test")
@@ -76,9 +80,9 @@ def ensure_dataset(dataset_cfg, data_dir):
 
     print(f"Generating train/test data from dataset config into {data_dir}...")
     if not data_dir_has_npz(train_dir):
-        _generate_split(dataset_cfg["train_trajectories"], train_dir, dt)
+        _generate_split(dataset_cfg["train_trajectories"], train_dir, dt, robot)
     if not data_dir_has_npz(test_dir):
-        _generate_split(dataset_cfg["test_trajectories"], test_dir, dt)
+        _generate_split(dataset_cfg["test_trajectories"], test_dir, dt, robot)
 
 
 def make_run_dir(dataset_name, model_name, experiment_name=None):
@@ -100,18 +104,21 @@ def main():
     parser.add_argument("--lookahead", type=int, default=2, help="Override lookahead for NODE (default: 2)")
     parser.add_argument("--epochs", type=int, default=15000, help="Override training epochs (default: 15k)")
     parser.add_argument("--lr", type=float, default=0.001, help="Override learning rate")
+    parser.add_argument("--robot", type=str, default="ur5", help="Robot config name under config/robot/ (default: dataset robot or ur5)")
     args = parser.parse_args()
 
     dataset_cfg, dataset_cfg_path = load_json_config(DATASETS_CONFIG_DIR, args.dataset)
     model_cfg, model_cfg_path = load_json_config(MODELS_CONFIG_DIR, args.model)
+    robot, robot_cfg, robot_cfg_path = make_robot(args.robot)
 
     data_name = dataset_cfg.get("name", args.dataset)
     data_dir = os.path.join(DATA_DIR, data_name)
-    ensure_dataset(dataset_cfg, data_dir)
+    ensure_dataset(dataset_cfg, data_dir, robot)
 
     run_dir = make_run_dir(args.dataset, args.model, args.name)
     shutil.copy2(dataset_cfg_path, os.path.join(run_dir, "dataset.json"))
     shutil.copy2(model_cfg_path, os.path.join(run_dir, "model.json"))
+    shutil.copy2(robot_cfg_path, os.path.join(run_dir, "robot.json"))
     print(f"Run directory: {run_dir}")
 
     model_utils.CHECKPOINT_DIR = os.path.join(run_dir, "checkpoints")
@@ -124,7 +131,7 @@ def main():
     sys.stdout = tee
 
     try:
-        print(f"dataset={args.dataset} model={args.model}")
+        print(f"dataset={args.dataset} model={args.model} robot={robot_cfg['name']}")
         print(f"lookahead={learn.LOOKAHEAD} epochs={learn.EPOCHS} lr={learn.LR}")
         print(f"model_cfg={model_cfg}")
 
@@ -134,9 +141,9 @@ def main():
         train_data = train_rollouts
         test_data = test_rollouts[0] # TODO: FIX ME LATER
 
-        # TODO: DATA AND NODE STEP_SIZE SHOULD MATCH
-        model = PlanarArmKnodeModel(model_cfg, gravity=np.array([-2.0, -12.0, 0.0])).to(torch.float64)
-        train_model(model, train_data, test_data)
+        visualize_trajectory.set_robot(robot)
+        model = ManipulatorKnodeModel(model_cfg, robot_config=robot_cfg).to(torch.float64)
+        train_model(model, train_data, test_data, robot=robot)
         
         print(f"Finished. Artifacts in {run_dir}")
     finally:

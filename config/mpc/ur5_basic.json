@@ -1,0 +1,25 @@
+{
+    "name": "ur5_basic",
+    "dt": 0.01,
+    "trajectories": [
+        {
+            "type": "circle",
+            "duration": 10.0,
+            "omega": 0.5,
+            "cx": 0.47,
+            "cy": 0.11,
+            "cz": 0.42,
+            "r": 0.06
+        },
+        {
+            "type": "line",
+            "duration": 8.0,
+            "omega": 0.4,
+            "lx0": 0.42,
+            "ly0": 0.08,
+            "lx1": 0.52,
+            "ly1": 0.14,
+            "cz": 0.42
+        }
+    ]
+}

@@ -89,7 +89,7 @@ class FatropManipulatorControl:
         cost = 0
 
         q_weights = np.full(self.nq, 100.0)
-        qdot_weights = np.full(self.nv, 10.0)
+        qdot_weights = np.full(self.nv, 100.0)
         Q = np.diag(np.concatenate([q_weights, qdot_weights]))
         R = np.diag(np.full(self.nu, 0.01))
 
@@ -105,7 +105,7 @@ class FatropManipulatorControl:
                 self.opti.subject_to(self.opti.bounded(-self.torque_limits[j], self.U[k][j], self.torque_limits[j]))
 
         terminal_error = self.X[self.mpc_horizon] - self.X_ref[:, self.mpc_horizon]
-        cost += ca.mtimes([terminal_error.T, Q * 20, terminal_error])
+        cost += ca.mtimes([terminal_error.T, Q * 25, terminal_error])
 
         self.opti.minimize(cost)
 

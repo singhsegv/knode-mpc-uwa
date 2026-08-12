@@ -1,0 +1,15 @@
+{
+    "name": "ur5_test",
+    "dt": 0.01,
+    "trajectories": [
+        {
+            "type": "circle",
+            "duration": 10.0,
+            "omega": 0.5,
+            "cx": 0.47,
+            "cy": 0.11,
+            "cz": 0.42,
+            "r": 0.06
+        }
+    ]
+}

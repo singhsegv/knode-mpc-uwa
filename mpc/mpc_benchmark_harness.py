@@ -45,13 +45,13 @@ def run_single_trajectory_mpc(spec, dt, mpc_horizon, enable_knode=False, knode_p
 
     nq = plant.nq
     x_start, y_start, z_start = get_trajectory_start_position(spec)
-    x_perturb = np.random.uniform(low=0.01, high=0.03)
-    y_perturb = np.random.uniform(low=0.01, high=0.03)
-    z_perturb = np.random.uniform(low=0.01, high=0.03)
+    # x_perturb = np.random.uniform(low=0.01, high=0.015)
+    # y_perturb = np.random.uniform(low=0.01, high=0.015)
+    # z_perturb = np.random.uniform(low=0.01, high=0.015)
 
-    x_start += x_perturb
-    y_start += y_perturb
-    z_start += z_perturb
+    # x_start += x_perturb
+    # y_start += y_perturb
+    # z_start += z_perturb
 
     q0, _ = inverse_kinematics(
         plant, plant.get_default_config(),
@@ -202,19 +202,33 @@ def main():
     parser.add_argument("--config", type=str, default="ur5_basic", help="JSON filename under config/mpc/ (without .json)")
     parser.add_argument("--knode-path", type=str, default=None, help="Path to a KNODE run directory (enables learned dynamics in MPC)")
     parser.add_argument("--no-knode", action="store_true", help="Use nominal dynamics instead of KNODE")
-    parser.add_argument("--mpc-horizon", type=int, default=25, help="MPC prediction horizon")
-    parser.add_argument("--output-dir", type=str, default=None, help="Directory for per-trajectory plots and stats.json")
+    parser.add_argument("--mpc-horizon", type=int, default=10, help="MPC prediction horizon")
+    parser.add_argument(
+        "--output-dir",
+        type=str,
+        default=None,
+        help="Folder name under mpc/benchmark_outputs/ (prefixed with YYYYMMDD_HHMMSS) "
+             "for per-trajectory plots and stats.json (defaults to the config name)",
+    )
     parser.add_argument("--robot", type=str, default="ur5-mpc", help="Robot config name under config/robot/")
     args = parser.parse_args()
 
+    knode_path = "/Users/singhsegv/upenn-research-scalar/implementations/learning-manipulator-dynamics/knode-mpc-planar-arm/runs/20260811_165726_ur5_generalization_basic1"
+
     robot_config, _ = load_robot_config(args.robot)
     config_path = os.path.join(DATASETS_DIR, f"{args.config}.json")
+    timestamp = time.strftime("%Y%m%d_%H%M%S")
+    output_dir = (
+        os.path.join(DEFAULT_OUTPUT_DIR, f"{timestamp}_{args.output_dir}")
+        if args.output_dir is not None
+        else None
+    )
     run_closed_loop_mpc(
         config_path=config_path,
-        knode_path=args.knode_path,
-        enable_knode=not args.no_knode and args.knode_path is not None,
+        knode_path=knode_path,
+        enable_knode=not args.no_knode,
         mpc_horizon=args.mpc_horizon,
-        output_dir=args.output_dir,
+        output_dir=output_dir,
         robot_config=robot_config,
     )
 

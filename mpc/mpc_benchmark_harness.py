@@ -14,7 +14,7 @@ DEFAULT_OUTPUT_DIR = os.path.join(SCRIPT_DIR, "benchmark_outputs")
 if PROJECT_ROOT not in sys.path:
     sys.path.insert(0, PROJECT_ROOT)
 
-from robots.simulator import PlanarArm
+from robots.simulator import Manipulator, load_robot_config
 
 from trajectory_utils import (
     compute_task_space_tracking_stats,
@@ -23,29 +23,43 @@ from trajectory_utils import (
     inverse_kinematics,
     plot_task_space_tracking,
 )
-from manipulator_mpc import ManipulatorControl
+# from manipulator_mpc import ManipulatorControl
+from fatrop_manipulator_mpc import FatropManipulatorControl as ManipulatorControl
 
 
-def get_plant_and_controller(dt=0.001, mpc_horizon=20, enable_knode=False, knode_path=None):
-    plant = PlanarArm(enable_viz=False)
-    mpc = ManipulatorControl(horizon=mpc_horizon, dt=dt, enable_knode=enable_knode, run_dir=knode_path)
+def get_plant_and_controller(dt=0.001, mpc_horizon=20, enable_knode=False, knode_path=None, robot_config=None):
+    plant = Manipulator(robot_config=robot_config, enable_viz=False)
+    mpc = ManipulatorControl(
+        horizon=mpc_horizon, dt=dt, enable_knode=enable_knode,
+        run_dir=knode_path, robot_config=robot_config,
+    )
     return plant, mpc
 
 
-def run_single_trajectory_mpc(spec, dt, mpc_horizon, enable_knode=False, knode_path=None, output_dir=None, traj_index=0):
+def run_single_trajectory_mpc(spec, dt, mpc_horizon, enable_knode=False, knode_path=None, output_dir=None, traj_index=0, robot_config=None):
     sim_time = spec["duration"]
-    plant, mpc = get_plant_and_controller(dt=dt, mpc_horizon=mpc_horizon, enable_knode=enable_knode, knode_path=knode_path)
+    plant, mpc = get_plant_and_controller(
+        dt=dt, mpc_horizon=mpc_horizon, enable_knode=enable_knode,
+        knode_path=knode_path, robot_config=robot_config,
+    )
 
-    x_start, y_start = get_trajectory_start_position(spec)
-    x_perturb = np.random.uniform(low=0.10, high=0.15, size=(1,)).item()
-    y_perturb = np.random.uniform(low=0.10, high=0.15, size=(1,)).item()
+    nq = plant.nq
+    x_start, y_start, z_start = get_trajectory_start_position(spec)
+    x_perturb = np.random.uniform(low=0.01, high=0.03)
+    y_perturb = np.random.uniform(low=0.01, high=0.03)
+    z_perturb = np.random.uniform(low=0.01, high=0.03)
 
-    x_start = x_start + x_perturb
-    y_start = y_start + y_perturb
-    q0, _ = inverse_kinematics(plant, np.array([0.5, 0.5]), x_start, y_start, 0.0, 0.0)
+    x_start += x_perturb
+    y_start += y_perturb
+    z_start += z_perturb
+
+    q0, _ = inverse_kinematics(
+        plant, plant.get_default_config(),
+        np.array([x_start, y_start, z_start]), np.zeros(3),
+    )
 
     plant.move_to(q0)
-    x_current_state = np.array([q0[0], q0[1], 0.0, 0.0])
+    x_current_state = np.concatenate([q0, np.zeros(nq)])
 
     history_x = [x_current_state]
     history_u = []
@@ -63,7 +77,7 @@ def run_single_trajectory_mpc(spec, dt, mpc_horizon, enable_knode=False, knode_p
             mpc_horizon=mpc_horizon,
             dt=dt,
             robot=plant,
-            q_prev=x_current_state[:2],
+            q_prev=x_current_state[:nq],
             spec=spec,
         )
 
@@ -72,7 +86,7 @@ def run_single_trajectory_mpc(spec, dt, mpc_horizon, enable_knode=False, knode_p
         solve_times.append(time.perf_counter() - t_start)
 
         u_actual = U_optimal[:, 0]
-        q_next, qdot_next = plant.step_rk4(x_current_state[:2], x_current_state[2:], u_actual, dt)
+        q_next, qdot_next = plant.step_rk4(x_current_state[:nq], x_current_state[nq:], u_actual, dt)
 
         x_current_state = np.concatenate([q_next.flatten(), qdot_next.flatten()])
         current_time += dt
@@ -92,7 +106,7 @@ def run_single_trajectory_mpc(spec, dt, mpc_horizon, enable_knode=False, knode_p
 
     history_x = np.array(history_x)
     history_u = np.array(history_u)
-    tracking_stats = compute_task_space_tracking_stats(history_x, dt, spec=spec)
+    tracking_stats = compute_task_space_tracking_stats(history_x, plant, dt, spec=spec)
 
     stats = {
         "index": traj_index,
@@ -123,7 +137,7 @@ def run_single_trajectory_mpc(spec, dt, mpc_horizon, enable_knode=False, knode_p
     return stats, history_x, history_u
 
 
-def run_closed_loop_mpc(config_path, knode_path=None, enable_knode=True, mpc_horizon=25, output_dir=None):
+def run_closed_loop_mpc(config_path, knode_path=None, enable_knode=True, mpc_horizon=25, output_dir=None, robot_config=None):
     with open(config_path) as f:
         config = json.load(f)
 
@@ -146,6 +160,7 @@ def run_closed_loop_mpc(config_path, knode_path=None, enable_knode=True, mpc_hor
             knode_path=knode_path,
             output_dir=output_dir,
             traj_index=i,
+            robot_config=robot_config,
         )
         all_stats.append(stats)
 
@@ -183,27 +198,24 @@ def run_closed_loop_mpc(config_path, knode_path=None, enable_knode=True, mpc_hor
 
 
 def main():
-    """
-    TODO:
-    - Change knode path to be just the folder name
-    """
     parser = argparse.ArgumentParser(description="Run closed-loop MPC benchmarks from a dataset config JSON.")
-    parser.add_argument("--config", type=str, default="basic", help="JSON filename under config/datasets/ (without .json)")
+    parser.add_argument("--config", type=str, default="ur5_basic", help="JSON filename under config/mpc/ (without .json)")
     parser.add_argument("--knode-path", type=str, default=None, help="Path to a KNODE run directory (enables learned dynamics in MPC)")
     parser.add_argument("--no-knode", action="store_true", help="Use nominal dynamics instead of KNODE")
     parser.add_argument("--mpc-horizon", type=int, default=25, help="MPC prediction horizon")
     parser.add_argument("--output-dir", type=str, default=None, help="Directory for per-trajectory plots and stats.json")
+    parser.add_argument("--robot", type=str, default="ur5-mpc", help="Robot config name under config/robot/")
     args = parser.parse_args()
 
-    knode_path = "/Users/singhsegv/upenn-research-scalar/implementations/learning-manipulator-dynamics/knode-mpc-planar-arm/runs/20260807_185634_generalization_training_basic1_gen-la-2-gravity2-12"
-
+    robot_config, _ = load_robot_config(args.robot)
     config_path = os.path.join(DATASETS_DIR, f"{args.config}.json")
     run_closed_loop_mpc(
         config_path=config_path,
-        knode_path=knode_path,
-        enable_knode=True,
+        knode_path=args.knode_path,
+        enable_knode=not args.no_knode and args.knode_path is not None,
         mpc_horizon=args.mpc_horizon,
         output_dir=args.output_dir,
+        robot_config=robot_config,
     )
 
 

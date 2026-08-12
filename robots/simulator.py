@@ -15,8 +15,14 @@ from pinocchio.visualize import MeshcatVisualizer
 from robot_descriptions.loaders.pinocchio import load_robot_description
 
 
-def load_robot_config(name):
+DEFAULT_ROBOT_NAME = "ur5"
+
+
+def load_robot_config(name=None):
     """Load robot config JSON and resolve model assets."""
+    if name is None:
+        name = DEFAULT_ROBOT_NAME
+
     path = os.path.join(ROBOT_CONFIG_DIR, f"{name}.json")
     if not os.path.isfile(path):
         raise FileNotFoundError(f"Robot config not found: {path}")

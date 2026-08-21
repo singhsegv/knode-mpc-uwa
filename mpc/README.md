@@ -6,7 +6,7 @@ Closed-loop model predictive control using Pinocchio dynamics (optionally augmen
 
 ```bash
 # Nominal dynamics benchmark
-python mpc/mpc_benchmark_harness.py --config ur5_basic --no-knode
+python mpc/mpc_benchmark_harness.py --config ur5_basic --no-knode --mpc-horizon 10 --output-dir imperfect-non-knode-hor-20
 
 # With learned K-NODE model
 python mpc/mpc_benchmark_harness.py \

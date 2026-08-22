@@ -77,10 +77,12 @@ class ManipulatorControl:
     def _build_optimization_problem(self):
         cost = 0
 
+        # TODO: Trajectories are not tracked if not 100 and also Q_terminal is lesser
         q_weights = np.full(self.nq, 100.0)
-        qdot_weights = np.full(self.nv, 10.0)
+        qdot_weights = np.full(self.nv, 100.0)
         Q = np.diag(np.concatenate([q_weights, qdot_weights]))
         R = np.diag(np.full(self.nu, 0.01))
+        Q_terminal = Q * 10
 
         for k in range(self.mpc_horizon):
             self.opti.subject_to(self.X[:, k + 1] == self.dynamics(self.X[:, k], self.U[:, k]))
@@ -90,7 +92,7 @@ class ManipulatorControl:
             cost += ca.mtimes([self.U[:, k].T, R, self.U[:, k]])
 
         terminal_error = self.X[:, self.mpc_horizon] - self.X_ref[:, self.mpc_horizon]
-        cost += ca.mtimes([terminal_error.T, Q * 25, terminal_error])
+        cost += ca.mtimes([terminal_error.T, Q_terminal, terminal_error])
 
         self.opti.minimize(cost)
         self.opti.subject_to(self.X[:, 0] == self.x0)
@@ -98,23 +100,35 @@ class ManipulatorControl:
         for j in range(self.nu):
             self.opti.subject_to(self.opti.bounded(-self.torque_limits[j], self.U[j, :], self.torque_limits[j]))
 
-        p_opts = {"expand": False, "print_time": False}
+        p_opts = {
+            "expand": True, 
+            "print_time": False
+        }
+        
+        # "hessian_approximation": "limited-memory" sucks for IPOPT for OCP
         s_opts = {
-            "max_iter": 500,
+            "max_iter": 100,
             "print_level": 0,
             "print_user_options": "no",
             "print_timing_statistics": "no",
             "tol": 1e-4,
-            "hessian_approximation": "limited-memory",
+            "acceptable_tol": 1e-2,
+            "acceptable_iter": 5,
+            "warm_start_init_point": "yes",
+            "mu_strategy": "adaptive",
         }
+
         self.opti.solver("ipopt", p_opts, s_opts)
 
-    def solve(self, current_state, reference_horizon, u_guess=None):
+    def solve(self, current_state, reference_horizon, u_guess=None, x_guess=None):
         self.opti.set_value(self.x0, current_state)
         self.opti.set_value(self.X_ref, reference_horizon)
 
         if u_guess is not None:
             self.opti.set_initial(self.U, u_guess)
+
+        if x_guess is not None:
+            self.opti.set_initial(self.X, x_guess)
 
         try:
             sol = self.opti.solve()
@@ -151,6 +165,7 @@ class ManipulatorControl:
         u = tau
         xdot = ca.vertcat(v, qdd)
 
+        # NOTE: RK4 messes up the real-time performance -> Euler supremacy
         x_next = x + xdot * self.dt
         return ca.Function("F", [x, u], [x_next])
 

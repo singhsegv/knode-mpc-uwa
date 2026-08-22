@@ -23,8 +23,9 @@ from trajectory_utils import (
     inverse_kinematics,
     plot_task_space_tracking,
 )
-# from manipulator_mpc import ManipulatorControl
-from fatrop_manipulator_mpc import FatropManipulatorControl as ManipulatorControl
+
+from manipulator_mpc import ManipulatorControl
+# from fatrop_manipulator_mpc import FatropManipulatorControl as ManipulatorControl
 
 
 def get_plant_and_controller(dt=0.001, mpc_horizon=20, enable_knode=False, knode_path=None, robot_config=None):
@@ -65,6 +66,7 @@ def run_single_trajectory_mpc(spec, dt, mpc_horizon, enable_knode=False, knode_p
     history_u = []
     solve_times = []
     u_prev = None
+    x_prev = None
     current_time = 0.0
 
     traj_label = f"{traj_index:02d}_{spec['type']}"
@@ -82,7 +84,7 @@ def run_single_trajectory_mpc(spec, dt, mpc_horizon, enable_knode=False, knode_p
         )
 
         t_start = time.perf_counter()
-        U_optimal, _ = mpc.solve(x_current_state, X_ref, u_guess=u_prev)
+        U_optimal, X_optimal = mpc.solve(x_current_state, X_ref, u_guess=u_prev, x_guess=x_prev)
         solve_times.append(time.perf_counter() - t_start)
 
         u_actual = U_optimal[:, 0]
@@ -95,13 +97,18 @@ def run_single_trajectory_mpc(spec, dt, mpc_horizon, enable_knode=False, knode_p
         u_prev[:, :-1] = U_optimal[:, 1:]
         u_prev[:, -1] = U_optimal[:, -1]
 
+        x_prev = np.zeros_like(X_optimal)
+        x_prev[:, 0] = x_current_state 
+        x_prev[:, 1:-1] = X_optimal[:, 2:]
+        x_prev[:, -1] = X_optimal[:, -1]
+
         history_x.append(x_current_state)
-        history_u.append(u_actual)
+        history_u.append(u_actual) 
 
         if step % 100 == 0:
             print(
                 f"  Step {step}/{steps} | Time: {current_time:.2f}s | "
-                f"Solve: {solve_times[-1] * 1000:.1f}ms"
+                f"Solve: {solve_times[-1] * 1000:.1f}ms per single step"
             )
 
     history_x = np.array(history_x)

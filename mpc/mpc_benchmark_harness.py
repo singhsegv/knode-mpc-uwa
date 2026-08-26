@@ -24,24 +24,34 @@ from trajectory_utils import (
     plot_task_space_tracking,
 )
 
-from manipulator_mpc import ManipulatorControl
-# from fatrop_manipulator_mpc import FatropManipulatorControl as ManipulatorControl
+def _load_mpc_class(solver_name):
+    if solver_name == "ipopt":
+        from manipulator_mpc import ManipulatorControl
+        return ManipulatorControl
+    if solver_name == "fatrop":
+        from fatrop_manipulator_mpc import FatropManipulatorControl
+        return FatropManipulatorControl
+    if solver_name == "acados":
+        from acados_manipulator_mpc import AcadosManipulatorControl
+        return AcadosManipulatorControl
+    raise ValueError(f"Unknown solver '{solver_name}'. Use ipopt, fatrop, or acados.")
 
 
-def get_plant_and_controller(dt=0.001, mpc_horizon=20, enable_knode=False, knode_path=None, robot_config=None):
+def get_plant_and_controller(dt=0.001, mpc_horizon=20, enable_knode=False, knode_path=None, robot_config=None, solver="ipopt"):
     plant = Manipulator(robot_config=robot_config, enable_viz=False)
-    mpc = ManipulatorControl(
+    Control = _load_mpc_class(solver)
+    mpc = Control(
         horizon=mpc_horizon, dt=dt, enable_knode=enable_knode,
         run_dir=knode_path, robot_config=robot_config,
     )
     return plant, mpc
 
 
-def run_single_trajectory_mpc(spec, dt, mpc_horizon, enable_knode=False, knode_path=None, output_dir=None, traj_index=0, robot_config=None):
+def run_single_trajectory_mpc(spec, dt, mpc_horizon, enable_knode=False, knode_path=None, output_dir=None, traj_index=0, robot_config=None, solver="ipopt"):
     sim_time = spec["duration"]
     plant, mpc = get_plant_and_controller(
         dt=dt, mpc_horizon=mpc_horizon, enable_knode=enable_knode,
-        knode_path=knode_path, robot_config=robot_config,
+        knode_path=knode_path, robot_config=robot_config, solver=solver,
     )
 
     nq = plant.nq
@@ -144,7 +154,7 @@ def run_single_trajectory_mpc(spec, dt, mpc_horizon, enable_knode=False, knode_p
     return stats, history_x, history_u
 
 
-def run_closed_loop_mpc(config_path, knode_path=None, enable_knode=True, mpc_horizon=25, output_dir=None, robot_config=None):
+def run_closed_loop_mpc(config_path, knode_path=None, enable_knode=True, mpc_horizon=25, output_dir=None, robot_config=None, solver="ipopt"):
     with open(config_path) as f:
         config = json.load(f)
 
@@ -168,6 +178,7 @@ def run_closed_loop_mpc(config_path, knode_path=None, enable_knode=True, mpc_hor
             output_dir=output_dir,
             traj_index=i,
             robot_config=robot_config,
+            solver=solver,
         )
         all_stats.append(stats)
 
@@ -178,6 +189,7 @@ def run_closed_loop_mpc(config_path, knode_path=None, enable_knode=True, mpc_hor
         "mpc_horizon": mpc_horizon,
         "enable_knode": enable_knode,
         "knode_path": knode_path,
+        "solver": solver,
         "trajectories": all_stats,
     }
 
@@ -218,6 +230,13 @@ def main():
              "for per-trajectory plots and stats.json (defaults to the config name)",
     )
     parser.add_argument("--robot", type=str, default="ur5-mpc", help="Robot config name under config/robot/")
+    parser.add_argument(
+        "--solver",
+        type=str,
+        default="ipopt",
+        choices=["ipopt", "fatrop", "acados"],
+        help="MPC backend: ipopt (CasADi Opti), fatrop, or acados",
+    )
     args = parser.parse_args()
 
     knode_path = "/Users/singhsegv/upenn-research-scalar/implementations/learning-manipulator-dynamics/knode-mpc-planar-arm/runs/20260811_165726_ur5_generalization_basic1"
@@ -237,6 +256,7 @@ def main():
         mpc_horizon=args.mpc_horizon,
         output_dir=output_dir,
         robot_config=robot_config,
+        solver=args.solver,
     )
 
 

@@ -5,3 +5,4 @@ archive-runs-data/
 runs/
 **/**/*.png
 benchmark_outputs/
+mpc/c_generated_code/

@@ -5,15 +5,22 @@ Closed-loop model predictive control using Pinocchio dynamics (optionally augmen
 ## Quick Start
 
 ```bash
-# Nominal dynamics benchmark
-python mpc/mpc_benchmark_harness.py --config ur5_basic --no-knode --mpc-horizon 10 --output-dir imperfect-non-knode-hor-20
+export ACADOS_SOURCE_DIR=/Users/singhsegv/all-things-robotics/acados
+export DYLD_LIBRARY_PATH=$ACADOS_SOURCE_DIR/lib:$DYLD_LIBRARY_PATH
 
-# With learned K-NODE model
+# Nominal dynamics with IPOPT (CasADi Opti)
+python mpc/mpc_benchmark_harness.py --config ur5_basic --no-knode --mpc-horizon 10 --solver ipopt --output-dir imperfect-non-knode-ipopt
+
+# Nominal dynamics with Acados (needs ACADOS_SOURCE_DIR + acados_template)
+python mpc/mpc_benchmark_harness.py --config ur5_basic --no-knode --mpc-horizon 10 --solver acados --output-dir imperfect-non-knode-acados
+
+# With learned K-NODE model (ipopt / fatrop only for now)
 python mpc/mpc_benchmark_harness.py \
     --config ur5_basic \
     --knode-path runs/<run_name>
 ```
 
+`--solver` choices: `ipopt` (default), `fatrop`, `acados`.
 ## State / Control Dimensions (UR5)
 
 | Symbol | Size | Contents |

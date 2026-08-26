@@ -52,3 +52,18 @@ idx  type            RMSE [m]     DTW [m]  DTW mean [m]     max [m]  solve avg [
   0  circle            0.0019      1.2735        0.0013      0.0037             9.4
 ========================================================================================================
 ```
+
+### 4. Acados
+```bash
+Starting closed-loop MPC for 00_circle (10.0s)...
+  Step 0/1000 | Time: 0.01s | Solve: 0.7ms per single step
+  Step 100/1000 | Time: 1.01s | Solve: 0.3ms per single step
+  Step 200/1000 | Time: 2.01s | Solve: 0.3ms per single step
+  Step 300/1000 | Time: 3.01s | Solve: 0.3ms per single step
+  Step 400/1000 | Time: 4.01s | Solve: 0.3ms per single step
+  Step 500/1000 | Time: 5.01s | Solve: 0.3ms per single step
+  Step 600/1000 | Time: 6.01s | Solve: 0.3ms per single step
+  Step 700/1000 | Time: 7.01s | Solve: 0.3ms per single step
+  Step 800/1000 | Time: 8.01s | Solve: 0.3ms per single step
+  Step 900/1000 | Time: 9.01s | Solve: 0.3ms per single step
+```

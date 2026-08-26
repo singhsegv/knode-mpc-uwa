@@ -239,7 +239,8 @@ def main():
     )
     args = parser.parse_args()
 
-    knode_path = "/Users/singhsegv/upenn-research-scalar/implementations/learning-manipulator-dynamics/knode-mpc-planar-arm/runs/20260811_165726_ur5_generalization_basic1"
+    # knode_path = "/Users/singhsegv/upenn-research-scalar/implementations/learning-manipulator-dynamics/knode-mpc-planar-arm/runs/20260811_165726_ur5_generalization_basic1"
+    knode_path = "/Users/singhsegv/upenn-research-scalar/implementations/learning-manipulator-dynamics/knode-mpc-planar-arm/runs/20260826_174959_ur5_generalization_tiny_ur5-tiny"
 
     robot_config, _ = load_robot_config(args.robot)
     config_path = os.path.join(DATASETS_DIR, f"{args.config}.json")

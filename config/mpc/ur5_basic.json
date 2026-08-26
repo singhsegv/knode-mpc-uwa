@@ -5,7 +5,7 @@
         {
             "type": "circle",
             "duration": 10.0,
-            "omega": 0.5,
+            "omega": 1.5,
             "cx": 0.47,
             "cy": 0.11,
             "cz": 0.42,
@@ -14,7 +14,7 @@
         {
             "type": "line",
             "duration": 8.0,
-            "omega": 0.4,
+            "omega": 1.2,
             "lx0": 0.42,
             "ly0": 0.08,
             "lx1": 0.52,

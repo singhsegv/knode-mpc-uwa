@@ -67,3 +67,19 @@ Starting closed-loop MPC for 00_circle (10.0s)...
   Step 800/1000 | Time: 8.01s | Solve: 0.3ms per single step
   Step 900/1000 | Time: 9.01s | Solve: 0.3ms per single step
 ```
+
+
+### 5. Acados + KNODE
+```bash
+Starting closed-loop MPC for 00_circle (10.0s)...
+  Step 0/1000 | Time: 0.01s | Solve: 1.2ms per single step
+  Step 100/1000 | Time: 1.01s | Solve: 0.4ms per single step
+  Step 200/1000 | Time: 2.01s | Solve: 0.4ms per single step
+  Step 300/1000 | Time: 3.01s | Solve: 0.4ms per single step
+  Step 400/1000 | Time: 4.01s | Solve: 0.4ms per single step
+  Step 500/1000 | Time: 5.01s | Solve: 0.4ms per single step
+  Step 600/1000 | Time: 6.01s | Solve: 0.4ms per single step
+  Step 700/1000 | Time: 7.01s | Solve: 0.4ms per single step
+  Step 800/1000 | Time: 8.01s | Solve: 0.4ms per single step
+  Step 900/1000 | Time: 9.01s | Solve: 0.4ms per single step
+```

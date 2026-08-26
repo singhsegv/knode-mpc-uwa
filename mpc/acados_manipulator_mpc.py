@@ -107,17 +107,34 @@ class AcadosManipulatorControl:
 
         # ----------- Residual Dynamics -----------
         state_dict, _ = load_state_dict_from_run(self.run_dir, epoch=self.knode_epoch)
+        # ------------------------------------------------------------
+        # For the previous full sized NN (was chosen ad-hoc though)
+        # ------------------------------------------------------------
+        # params = [
+        #     tensor_to_dm(state_dict[f"func.residual_dynamics_network.{i}.{attr}"])
+        #     for i in (0, 2, 4, 6)
+        #     for attr in ("weight", "bias")
+        # ]
+
+        # # TODO: Hardcoded for 2 hidden layers -> FIXME later
+        # h = ca.tanh(ca.mtimes(params[0], q) + params[1])
+        # h = ca.tanh(ca.mtimes(params[2], h) + params[3])
+        # h = ca.tanh(ca.mtimes(params[4], h) + params[5])
+
+        # residual_qdd = ca.mtimes(params[6], h) + params[7]
+
+        # ------------------------------------------------------------
+        # Tiny single hidden layer NN with 32 neurons
+        # ------------------------------------------------------------
         params = [
             tensor_to_dm(state_dict[f"func.residual_dynamics_network.{i}.{attr}"])
-            for i in (0, 2, 4, 6)
+            for i in (0, 2, 4)
             for attr in ("weight", "bias")
         ]
-
-        # TODO: Hardcoded for 2 hidden layers -> FIXME later
+        
         h = ca.tanh(ca.mtimes(params[0], q) + params[1])
-        h = ca.tanh(ca.mtimes(params[2], h) + params[3])
-        h = ca.tanh(ca.mtimes(params[4], h) + params[5])
-        residual_qdd = ca.mtimes(params[6], h) + params[7]
+        h = ca.tanh(ca.mtimes(params[2], h) + params[3])        
+        residual_qdd = ca.mtimes(params[4], h) + params[5]
 
         qdd = nominal_qdd + residual_qdd
         x = ca.vertcat(q, v)

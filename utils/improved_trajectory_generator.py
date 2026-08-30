@@ -138,6 +138,72 @@ def _parse_helix_axis(spec):
     return np.asarray(spec["helix_axis"], dtype=float)
 
 
+def is_joint_space_spec(spec):
+    """True when the spec defines joint-space references (no task-space IK)."""
+    return spec.get("space", "task").lower() == "joint"
+
+
+def fourier_joint_trajectory(t, q0, harmonics, omega_f):
+    """
+    Swevers/Park-style periodic joint trajectory (finite Fourier series).
+
+    q_i(t) = q0_i + sum_l [ a_il/(omega_f*l) * sin(omega_f*l*t) - b_il/(omega_f*l) * cos(omega_f*l*t) ]
+    qdot_i(t) = sum_l [ a_il*cos(omega_f*l*t) + b_il*sin(omega_f*l*t) ]
+    qddot_i(t) = sum_l omega_f*l * [ -a_il*sin(omega_f*l*t) + b_il*cos(omega_f*l*t) ]
+
+    harmonics: list of {"l": int, "a": (nq,), "b": (nq,)}
+    """
+    q0 = np.asarray(q0, dtype=float)
+    nq = q0.shape[0]
+    q = q0.copy()
+    qdot = np.zeros(nq)
+    qddot = np.zeros(nq)
+
+    for harmonic in harmonics:
+        l = int(harmonic["l"])
+        a = np.asarray(harmonic["a"], dtype=float)
+        b = np.asarray(harmonic["b"], dtype=float)
+        if a.shape[0] != nq or b.shape[0] != nq:
+            raise ValueError(f"harmonic l={l}: expected length-{nq} vectors for a and b")
+
+        angle = omega_f * l * t
+        s, c = np.sin(angle), np.cos(angle)
+        q += (a / (omega_f * l)) * s - (b / (omega_f * l)) * c
+        qdot += a * c + b * s
+        qddot += omega_f * l * (-a * s + b * c)
+
+    return q, qdot, qddot
+
+
+def sample_joint_trajectory(t, spec, nq):
+    """Sample (q, qdot, qddot) for a joint-space trajectory spec."""
+    trajectory = spec["type"]
+    if trajectory != "fourier":
+        raise ValueError(
+            f"Joint-space sampling supports type='fourier', got {trajectory!r}"
+        )
+
+    q0 = spec.get("q0")
+    if q0 is None:
+        raise ValueError("Joint-space fourier spec requires 'q0'")
+    q0 = np.asarray(q0, dtype=float)
+    if q0.shape[0] != nq:
+        raise ValueError(f"q0 length {q0.shape[0]} does not match robot nq={nq}")
+
+    harmonics = spec.get("harmonics")
+    if not harmonics:
+        raise ValueError("Joint-space fourier spec requires non-empty 'harmonics'")
+
+    omega_f = spec.get("omega_f", spec.get("omega", 0.3))
+    return fourier_joint_trajectory(t, q0, harmonics, omega_f)
+
+
+def get_joint_trajectory_start(spec, nq):
+    """Return (q, qdot, qddot) at t=0 for a joint-space spec."""
+    q, qdot, qddot = sample_joint_trajectory(0.0, spec, nq)
+    return q, qdot, qddot
+
+
 def sample_trajectory(t, spec):
     """
     Sample a 3D task-space trajectory from a JSON spec.

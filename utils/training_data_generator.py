@@ -31,13 +31,18 @@ import utils.model_utils as model_utils
 from utils.model_utils import latest_checkpoint_epoch, load_model_checkpoint
 
 # from utils.trajectory_generator import sample_trajectory, get_trajectory_start
-from utils.improved_trajectory_generator import sample_trajectory, get_trajectory_start
+from utils.improved_trajectory_generator import (
+    sample_trajectory,
+    get_trajectory_start,
+    sample_joint_trajectory,
+    get_joint_trajectory_start,
+    is_joint_space_spec,
+)
 
 DATASETS_DIR = os.path.join(PROJECT_ROOT, "config", "datasets")
 DEFAULT_CONFIG_NAME = "ur5_demo"
 DEFAULT_OUTPUT_DIR = os.path.join(PROJECT_ROOT, "data")
 PLOT_OUTPUT_DIR = os.path.join(PROJECT_ROOT, "outputs")
-
 
 def inverse_kinematics(robot, q_prev, pos_des, vel_des, damping=0.05, posture_weight=0.05):
     """Numerical IK + damped least-squares velocity mapping."""
@@ -98,44 +103,58 @@ def collect(spec, robot, enable_viz=False, knode_model=None, dt=None):
     des_ee_vel_log = np.empty((n_steps, task_dim))
     des_ee_acc_log = np.empty((n_steps, task_dim))
 
-    x_start, y_start, z_start = get_trajectory_start(spec)
-    pos_start = np.array([x_start, y_start, z_start])[:task_dim]
+    joint_space = is_joint_space_spec(spec)
 
-    q_initial, _ = inverse_kinematics(robot, robot.get_default_config(), pos_start, np.zeros(task_dim))
-    robot.move_to(q_initial)
-    q = q_initial.copy()
+    if joint_space:
+        q_initial, qdot_initial, _ = get_joint_trajectory_start(spec, nq)
+        robot.move_to(q_initial)
+        q = q_initial.copy()
+        qdot = qdot_initial.copy()
+    else:
+        x_start, y_start, z_start = get_trajectory_start(spec)
+        pos_start = np.array([x_start, y_start, z_start])[:task_dim]
+        q_initial, _ = inverse_kinematics(robot, robot.get_default_config(), pos_start, np.zeros(task_dim))
+        robot.move_to(q_initial)
+        q = q_initial.copy()
+        qdot = np.zeros(nq)
 
     if enable_viz:
         robot.display(q)
         time.sleep(2)
 
-    qdot = np.zeros(nq)
     q_prev = q.copy()
 
     for i in range(n_steps):
         t = i * dt
         t_log[i] = t
 
-        vals = sample_trajectory(t, spec)
-        pos_des = np.array(vals[:3])[:task_dim]
-        vel_des = np.array(vals[3:6])[:task_dim]
-        acc_des = np.array(vals[6:9])[:task_dim]
+        if joint_space:
+            q_des, qdot_des, qddot_des = sample_joint_trajectory(t, spec, nq)
+            des_ee_pos_log[i] = robot.ee_position(q_des)
+            J_des = robot.ee_jacobian(q_des)
+            des_ee_vel_log[i] = J_des @ qdot_des
+            des_ee_acc_log[i] = J_des @ qddot_des
+        else:
+            vals = sample_trajectory(t, spec)
+            pos_des = np.array(vals[:3])[:task_dim]
+            vel_des = np.array(vals[3:6])[:task_dim]
+            acc_des = np.array(vals[6:9])[:task_dim]
 
-        des_ee_pos_log[i] = pos_des
-        des_ee_vel_log[i] = vel_des
-        des_ee_acc_log[i] = acc_des
+            des_ee_pos_log[i] = pos_des
+            des_ee_vel_log[i] = vel_des
+            des_ee_acc_log[i] = acc_des
 
-        # -------------------------------------------------------------------------------------
-        # TODO: FIXME, I'm sketchy
-        q_des, qdot_des = inverse_kinematics(robot, q_prev, pos_des, vel_des)
-        J = robot.ee_jacobian(q_des)
-        task_dim_local = J.shape[0]
-        JJt = J @ J.T
-        damp = 0.05 ** 2 * np.eye(task_dim_local)
-        J_pinv = J.T @ np.linalg.inv(JJt + damp)
-        qddot_des = J_pinv @ acc_des # TODO: Missing possibly qdot terms here like the planar thingy
-        q_prev = q_des.copy()
-        # -------------------------------------------------------------------------------------
+            # -------------------------------------------------------------------------------------
+            # TODO: FIXME, I'm sketchy
+            q_des, qdot_des = inverse_kinematics(robot, q_prev, pos_des, vel_des)
+            J = robot.ee_jacobian(q_des)
+            task_dim_local = J.shape[0]
+            JJt = J @ J.T
+            damp = 0.05 ** 2 * np.eye(task_dim_local)
+            J_pinv = J.T @ np.linalg.inv(JJt + damp)
+            qddot_des = J_pinv @ acc_des # TODO: Missing possibly qdot terms here like the planar thingy
+            q_prev = q_des.copy()
+            # -------------------------------------------------------------------------------------
 
         e = q_des - q
         ed = qdot_des - qdot
@@ -153,12 +172,13 @@ def collect(spec, robot, enable_viz=False, knode_model=None, dt=None):
         if knode_model is not None:
             q, qdot = step_with_knode(knode_model, q, qdot, tau, dt)
         else:
-            q, qdot = robot.step_torchdiffeq(q, qdot, tau, dt)
-            # q, qdot = robot.underwater_step_torchdiffeq(q, qdot, tau, dt)
+            # q, qdot = robot.step_torchdiffeq(q, qdot, tau, dt)
+            q, qdot = robot.underwater_step_torchdiffeq(q, qdot, tau, dt)
 
     meta = dict(spec)
     meta["n_steps"] = n_steps
     meta["trajectory"] = spec["type"]
+    meta["space"] = "joint" if joint_space else "task"
 
     return {
         "t": t_log,

@@ -115,7 +115,9 @@ Key idea: modern Fourier-series formulation with explicit constraints; useful fo
 
 ## Mapping to This Repo
 
-This codebase collects data in **task space** (`utils/improved_trajectory_generator.py` → IK in `utils/training_data_generator.py`), not with optimized joint-space Fourier trajectories. The practical excitation set in `config/datasets/ur5_sysid_excitation.json` applies ID principles indirectly:
+For optimal excitation in the classical sense, use **joint-space Fourier** trajectories (`space: "joint"`, `type: "fourier"`) — see `config/datasets/ur5_joint_fourier.json` and `utils/improved_trajectory_generator.py`.
+
+Task-space trajectories (`space: "task"`, default) apply ID principles indirectly:
 
 - **Frequency diversity** — mix slow and fast `omega`
 - **Amplitude diversity** — large slow paths (gravity) vs small fast paths (inertia/Coriolis)
@@ -123,4 +125,4 @@ This codebase collects data in **task space** (`utils/improved_trajectory_genera
 - **Direction reversals** — lemniscate figure-8s
 - **3D coupling** — spatial helix with `helix_axis`
 
-For optimal excitation in the classical sense, the next step would be a **joint-space Fourier trajectory** type optimized on regressor condition number.
+For optimal excitation in the classical sense, the next step is optimizing **joint-space Fourier** coefficients on regressor condition number (Swevers/Park). Hardcoded examples ship in `config/datasets/ur5_joint_fourier.json`.

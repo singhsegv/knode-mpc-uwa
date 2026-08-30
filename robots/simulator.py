@@ -107,8 +107,11 @@ class Manipulator:
         """tau = M(q) qddot + C(q, qdot) qdot + g(q)."""
         return pin.rnea(self.model, self.data, q, qdot, qddot)
 
-    def forward_dynamics(self, q, qdot, tau):
-        return pin.aba(self.model, self.data, q, qdot, tau)
+    def forward_dynamics(self, q, qdot, tau, fext=None):
+        if fext is None:
+            return pin.aba(self.model, self.data, q, qdot, tau)
+        else:
+            return pin.aba(self.model, self.data, q, qdot, tau, fext)
 
     def ee_position(self, q):
         """End-effector position (x, y, z) from Pinocchio FK."""
@@ -163,9 +166,9 @@ class Manipulator:
         )
         return jac[: self.task_space_dim]
 
-    def step_rk4(self, q, qdot, tau, dt):
+    def step_rk4(self, q, qdot, tau, dt, fext=None):
         def rhs(q_state, qdot_state):
-            qdd = self.forward_dynamics(q_state, qdot_state, tau)
+            qdd = self.forward_dynamics(q_state, qdot_state, tau, fext)
             return qdot_state, qdd
 
         k1_q, k1_v = rhs(q, qdot)
@@ -177,6 +180,102 @@ class Manipulator:
         qdot_next = qdot + (dt / 6.0) * (k1_v + 2.0 * k2_v + 2.0 * k3_v + k4_v)
 
         return q_next, qdot_next
+
+    def _get_underwater_forces(self, q, qdot):
+        """
+        TODO: SKETCHY -> step_rk4 needs to know about the external forces for all the sub steps?
+              VS -> Just the aba() method knowing about this since q and qdot change -> Fext shoudl change
+
+        Steps
+        1. Read config for the calculation type
+        2. Link velocities
+        3. Fluid velocity -> TODO: tune me
+            a. Uniform
+            b. Shear (height based)
+        4. Relative velocity
+        5. Wrench calculation
+        6. Pinocchio injection
+        """
+        fext = [pin.Force.Zero() for _ in range(self.model.njoints)]
+        pin.forwardKinematics(self.model, self.data, q, qdot)
+        pin.updateFramePlacements(self.model, self.data)
+
+        # TODO: Linear + Quadratic drag both?? READ MORE on this
+        Dl, Dq = 10.0, 50.0
+
+        # Uniform flow
+        for joint_id in range(1, self.model.njoints):
+            pos = self.data.oMi[joint_id].translation
+
+            v_link = pin.getVelocity(self.model, self.data, joint_id).linear
+            v_fluid = np.array([0.2, 0.0, 0.0]) # TODO: Change me based on the config
+
+            v_rel = v_link - v_fluid
+            f_drag_linear = -Dl * v_rel
+            f_drag_quad = -Dq * np.linalg.norm(v_rel) * v_rel # TODO: Wtf? Why not a transpose and multiply
+            total_force = f_drag_linear + f_drag_quad
+
+            # TODO: SKETCHY
+            # 1. Force applied at the joint frame here -> Good enough?
+            # 2. No angular torque, only linear force computation
+            fext[joint_id] = pin.Force(total_force, np.zeros(3))
+
+        # Shear flow
+        # k_shear = 0.5
+        # for joint_id in range(1, self.model.njoints):
+        #     pos = self.data.oMi[joint_id].translation
+
+        #     v_link = pin.getVelocity(self.model, self.data, joint_id).linear
+
+        #     z_height = pos[2]
+        #     v_fluid = np.array([k_shear * z_height, 0.0, 0.0]) # TODO: Change me based on the config
+
+        #     v_rel = v_link - v_fluid
+        #     f_drag_linear = -Dl * v_rel
+        #     f_drag_quad = -Dq * np.linalg.norm(v_rel) * v_rel # TODO: Wtf? Why not a transpose and multiply
+        #     total_force = f_drag_linear + f_drag_quad
+
+        #     # TODO: SKETCHY
+        #     # 1. Force applied at the joint frame here -> Good enough?
+        #     # 2. No angular torque, only linear force computation
+        #     fext[joint_id] = pin.Force(total_force, np.zeros(3))
+
+        return fext
+
+    def step_underwater(self, q, qdot, tau, dt):
+        fext = self._get_underwater_forces(q, qdot)
+        q_next, qdot_next = self.step_rk4(q, qdot, tau, dt, fext)
+        return q_next, qdot_next
+    
+    def underwater_step_torchdiffeq(self, q, qdot, tau, dt):
+        """Steps dynamics using torchdiffeq RK4 with zero-order hold on tau."""
+        q = torch.tensor(q, dtype=torch.float64)
+        qdot = torch.tensor(qdot, dtype=torch.float64)
+
+        def ode_func(t, state):
+            q_state, qdot_state = state
+            q_state = q_state.detach().cpu().numpy()
+            qdot_state = qdot_state.detach().cpu().numpy()
+            fext = self._get_underwater_forces(q_state, qdot_state)
+            qdd = self.forward_dynamics(q_state, qdot_state, tau, fext)
+            return (
+                torch.tensor(qdot_state, dtype=torch.float64),
+                torch.tensor(qdd, dtype=torch.float64),
+            )
+
+        t_span = torch.tensor([0.0, dt], dtype=q.dtype, device=q.device)
+        initial_state = (q, qdot)
+        trajectory = odeint(
+            ode_func,
+            initial_state,
+            t_span,
+            method="rk4",
+            options={"step_size": dt},
+        )
+
+        q_next = trajectory[0][-1]
+        qdot_next = trajectory[1][-1]
+        return q_next.detach().cpu().numpy(), qdot_next.detach().cpu().numpy()
 
     def step_torchdiffeq(self, q, qdot, tau, dt):
         """Steps dynamics using torchdiffeq RK4 with zero-order hold on tau."""
@@ -206,6 +305,11 @@ class Manipulator:
         q_next = trajectory[0][-1]
         qdot_next = trajectory[1][-1]
         return q_next.detach().cpu().numpy(), qdot_next.detach().cpu().numpy()
+
+    def get_underwater_dynamics(self, q, qdot, tau):
+        fext = self._get_underwater_forces(q, qdot)
+        qdd = self.forward_dynamics(q, qdot, tau, fext)
+        return qdot, qdd
 
     def get_nominal_dynamics(self, q, qdot, tau):
         qdd = self.forward_dynamics(q, qdot, tau)

@@ -1,0 +1,20 @@
+{
+    "name": "ur5",
+    "description": "ur5e_description",
+    "ee_frame": "tool0",
+    "nq": 6,
+    "nv": 6,
+    "default_q": [0.0, -1.5707963267948966, 1.5707963267948966, 0.0, 1.5707963267948966, 0.0],
+    "plant_gravity": [0.0, 0.0, -9.81],
+    "model_gravity": [0.0, 0.0, -9.81],
+    "torque_limits": [150.0, 150.0, 150.0, 28.0, 28.0, 28.0],
+    "kp": [200.0, 200.0, 150.0, 100.0, 80.0, 50.0],
+    "kd": [20.0, 20.0, 15.0, 10.0, 8.0, 5.0],
+    "task_space_dim": 3,
+    "notes": "Loaded via robot_descriptions (official Universal Robots ROS2 xacro)",
+    "underwater": {
+        "enable": true,
+        "flow": "shearing",
+        "fluid_velocity": [0.0, 123.0, 0.0]
+    }
+}

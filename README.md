@@ -18,6 +18,9 @@ python utils/compare_collected_rollouts.py data/standalone data/other_run --save
 
 # Performance and generalization
 python evaluate/benchmark_model.py --run <run_name> --epoch 2100 --dataset benchmark_basic --plot
+
+# Just training data generation
+python utils/training_data_generator.py --config ur5_generalization --viz
 ```
 
 

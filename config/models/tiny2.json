@@ -1,0 +1,8 @@
+{
+    "hidden_layers": 2,
+    "hidden_neurons": 32,
+    "activation": "tanh",
+    "step_size": 0.01,
+    "nominal_only": false,
+    "perfect_nominal": false
+}

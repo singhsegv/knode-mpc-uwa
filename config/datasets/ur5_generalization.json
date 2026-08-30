@@ -16,7 +16,7 @@
         {
             "type": "circle",
             "duration": 15.0,
-            "omega": 0.8,
+            "omega": 1.5,
             "cx": 0.45,
             "cy": 0.13,
             "cz": 0.40,
@@ -25,7 +25,7 @@
         {
             "type": "lemniscate",
             "duration": 15.0,
-            "omega": 0.4,
+            "omega": 1.2,
             "cx": 0.47,
             "cy": 0.11,
             "cz": 0.42,
@@ -34,7 +34,7 @@
         {
             "type": "line",
             "duration": 12.0,
-            "omega": 0.5,
+            "omega": 1.0,
             "lx0": 0.42,
             "ly0": 0.08,
             "lx1": 0.52,
@@ -45,7 +45,7 @@
         {
             "type": "helix",
             "duration": 20.0,
-            "omega": 0.5,
+            "omega": 1.0,
             "cx": 0.47,
             "cy": 0.11,
             "r": 0.05,
@@ -56,7 +56,7 @@
         {
             "type": "circle",
             "duration": 8.0,
-            "omega": 1.0,
+            "omega": 1.5,
             "cx": 0.50,
             "cy": 0.10,
             "cz": 0.41,
@@ -65,7 +65,7 @@
         {
             "type": "line",
             "duration": 10.0,
-            "omega": 0.7,
+            "omega": 1.7,
             "lx0": 0.44,
             "ly0": 0.14,
             "lx1": 0.50,

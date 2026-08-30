@@ -8,10 +8,17 @@ import sys
 import time
 import argparse
 
+SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
+PROJECT_ROOT = os.path.dirname(SCRIPT_DIR)
+
+if PROJECT_ROOT not in sys.path:
+    sys.path.insert(0, PROJECT_ROOT)
+
 import matplotlib.pyplot as plt
 import numpy as np
 import torch
 from scipy.optimize import least_squares
+from robots.simulator import make_robot
 
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 PROJECT_ROOT = os.path.dirname(SCRIPT_DIR)
@@ -22,7 +29,9 @@ if PROJECT_ROOT not in sys.path:
 from knode.model import ManipulatorKnodeModel
 import utils.model_utils as model_utils
 from utils.model_utils import latest_checkpoint_epoch, load_model_checkpoint
-from utils.trajectory_generator import sample_trajectory, get_trajectory_start
+
+# from utils.trajectory_generator import sample_trajectory, get_trajectory_start
+from utils.improved_trajectory_generator import sample_trajectory, get_trajectory_start
 
 DATASETS_DIR = os.path.join(PROJECT_ROOT, "config", "datasets")
 DEFAULT_CONFIG_NAME = "ur5_demo"
@@ -145,6 +154,7 @@ def collect(spec, robot, enable_viz=False, knode_model=None, dt=None):
             q, qdot = step_with_knode(knode_model, q, qdot, tau, dt)
         else:
             q, qdot = robot.step_torchdiffeq(q, qdot, tau, dt)
+            # q, qdot = robot.underwater_step_torchdiffeq(q, qdot, tau, dt)
 
     meta = dict(spec)
     meta["n_steps"] = n_steps
@@ -298,7 +308,7 @@ def main():
     output_dir = args.output_dir or os.path.join(DEFAULT_OUTPUT_DIR, combo_name)
     dt = config["dt"]
 
-    robot, robot_config = make_robot(args.robot_config)
+    robot, robot_cfg, robot_cfg_path = make_robot(args.robot_config)
 
     if args.viz:
         robot.enable_visualization()

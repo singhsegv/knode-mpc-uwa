@@ -4,7 +4,6 @@ import numpy as np
 import torch
 from torch import nn
 
-from knode.model import ManipulatorKnodeModel
 from utils.data_utils import load_data
 from utils.model_utils import save_model_checkpoint, evaluate_model, evaluate_horizon_loss
 from utils.visualize_trajectory import plot_trajectory_comparison, horizon_losses, set_robot

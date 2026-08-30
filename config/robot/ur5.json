@@ -11,5 +11,10 @@
     "kp": [200.0, 200.0, 150.0, 100.0, 80.0, 50.0],
     "kd": [20.0, 20.0, 15.0, 10.0, 8.0, 5.0],
     "task_space_dim": 3,
-    "notes": "Loaded via robot_descriptions (official Universal Robots ROS2 xacro)"
+    "notes": "Loaded via robot_descriptions (official Universal Robots ROS2 xacro)",
+    "underwater": {
+        "enable": true,
+        "flow": "uniform/shearing",
+        "fluid_velocity": [0.0, 123.0, 0.0]
+    }
 }

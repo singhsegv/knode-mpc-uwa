@@ -98,7 +98,8 @@ def run_single_trajectory_mpc(spec, dt, mpc_horizon, enable_knode=False, knode_p
         solve_times.append(time.perf_counter() - t_start)
 
         u_actual = U_optimal[:, 0]
-        q_next, qdot_next = plant.step_rk4(x_current_state[:nq], x_current_state[nq:], u_actual, dt)
+        # q_next, qdot_next = plant.step_rk4(x_current_state[:nq], x_current_state[nq:], u_actual, dt)
+        q_next, qdot_next = plant.step_underwater(x_current_state[:nq], x_current_state[nq:], u_actual, dt)
 
         x_current_state = np.concatenate([q_next.flatten(), qdot_next.flatten()])
         current_time += dt
@@ -239,8 +240,8 @@ def main():
     )
     args = parser.parse_args()
 
-    # knode_path = "/Users/singhsegv/upenn-research-scalar/implementations/learning-manipulator-dynamics/knode-mpc-planar-arm/runs/20260811_165726_ur5_generalization_basic1"
-    knode_path = "/Users/singhsegv/upenn-research-scalar/implementations/learning-manipulator-dynamics/knode-mpc-planar-arm/runs/20260826_174959_ur5_generalization_tiny_ur5-tiny"
+    # knode_path = "/Users/singhsegv/upenn-research-scalar/implementations/learning-manipulator-dynamics/knode-mpc-planar-arm/runs/20260830_142747_ur5_generalization_tiny2_ur5-generalization-tiny2-uniform-flow" # q+qdot knode
+    knode_path = "/Users/singhsegv/upenn-research-scalar/implementations/learning-manipulator-dynamics/knode-mpc-planar-arm/runs/20260830_143942_ur5_generalization_tiny2_ur5-generalization-tiny2-uniform-flow-vanilla-no-qdot" # q knode
 
     robot_config, _ = load_robot_config(args.robot)
     config_path = os.path.join(DATASETS_DIR, f"{args.config}.json")

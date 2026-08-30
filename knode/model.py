@@ -65,6 +65,7 @@ class ManipulatorODEFunc(nn.Module):
     def compute_nominal(self, x, xdot, u):
         """
         This part can/should be parallelized
+        x and xdot naming is SKETCHY AF -> I mixed up mpc and this
         """
         rows = x.shape[0]
         output = np.zeros((rows, self.state_dim))

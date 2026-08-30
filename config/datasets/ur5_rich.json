@@ -1,0 +1,187 @@
+{
+    "name": "ur5_rich",
+    "description": "Richer full 3D trajectories unlike previous basic ones",
+    "robot": "ur5",
+    "dt": 0.01,
+    "train_trajectories": [
+        {
+            "type": "circle",
+            "axis": "xy",
+            "duration": 5.0,
+            "omega": 1.0,
+            "cx": 0.0,
+            "cy": 0.0,
+            "cz": 0.5,
+            "r": 0.3
+        },
+        {
+            "type": "circle",
+            "axis": "xy",
+            "duration": 5.0,
+            "omega": 1.3,
+            "cx": 0.0,
+            "cy": 0.0,
+            "cz": 0.5,
+            "r": 0.7
+        },
+        {
+            "type": "circle",
+            "axis": "xy",
+            "duration": 5.0,
+            "omega": 0.8,
+            "cx": 0.1,
+            "cy": 0.1,
+            "cz": 0.6,
+            "r": 0.4
+        },
+        {
+            "type": "circle",
+            "axis": "yz",
+            "duration": 10.0,
+            "omega": 1.0,
+            "cx": 0.0,
+            "cy": 0.5,
+            "cz": 0.5,
+            "r": 0.3
+        },
+        {
+            "type": "circle",
+            "axis": "yz",
+            "duration": 10.0,
+            "omega": 1.4,
+            "cx": 0.2,
+            "cy": 0.3,
+            "cz": 0.3,
+            "r": 0.3
+        },
+        {
+            "type": "circle",
+            "axis": "yz",
+            "duration": 3.0,
+            "omega": 1.2,
+            "cx": 0.2,
+            "cy": 0.0,
+            "cz": 0.3,
+            "r": 0.7
+        },
+        {
+            "type": "circle",
+            "axis": "xz",
+            "duration": 10.0,
+            "omega": 1.8,
+            "cx": 0.2,
+            "cy": 0.3,
+            "cz": 0.7,
+            "r": 0.3
+        },
+        {
+            "type": "lemniscate",
+            "axis": "xy",
+            "duration": 8.0,
+            "omega": 1.0,
+            "cx": 0.3,
+            "cy": 0.3,
+            "cz": 0.5,
+            "a": 0.3
+        },
+        {
+            "type": "lemniscate",
+            "axis": "yz",
+            "duration": 10.0,
+            "omega": 1.4,
+            "cx": 0.0,
+            "cy": 0.5,
+            "cz": 0.5,
+            "a": 0.3
+        },
+        {
+            "type": "lemniscate",
+            "axis": "yz",
+            "duration": 10.0,
+            "omega": 1.2,
+            "cx": 0.2,
+            "cy": 0.0,
+            "cz": 0.3,
+            "a": 0.7
+        },
+        {
+            "type": "lemniscate",
+            "axis": "xz",
+            "duration": 5.0,
+            "omega": 1.8,
+            "cx": 0.2,
+            "cy": 0.3,
+            "cz": 0.7,
+            "a": 0.3
+        },
+        {
+            "type": "lemniscate",
+            "axis": "xz",
+            "duration": 10.0,
+            "omega": 1.3,
+            "cx": 0.2,
+            "cy": 0.3,
+            "cz": 0.4,
+            "a": 0.5
+        },
+        {
+            "type": "helix",
+            "duration": 15.0,
+            "omega": 1.0,
+            "cx": 0.0,
+            "cy": 0.0,
+            "cz": 0.35,
+            "r": 0.25,
+            "pitch": 0.20,
+            "helix_axis": [0, 0, 1]
+        },
+        {
+            "type": "helix",
+            "duration": 15.0,
+            "omega": 1.2,
+            "cx": 0.2,
+            "cy": 0.3,
+            "cz": 0.5,
+            "r": 0.20,
+            "pitch": 0.15,
+            "helix_axis": [1, 0, 0]
+        },
+        {
+            "type": "helix",
+            "duration": 15.0,
+            "omega": 1.7,
+            "cx": 0.1,
+            "cy": 0.1,
+            "cz": 0.55,
+            "r": 0.25,
+            "pitch": 0.18,
+            "helix_axis": [0, 1, 0]
+        },
+        {
+            "type": "helix",
+            "duration": 12.0,
+            "omega": 0.8,
+            "cx": 0.0,
+            "cy": 0.2,
+            "cz": 0.4,
+            "r": 0.20,
+            "pitch": 0.22,
+            "helix_axis": [1, 1, 1]
+        },
+        {
+            "type": "helix",
+            "duration": 10.0,
+            "omega": 1.4,
+            "cx": 0.15,
+            "cy": 0.25,
+            "cz": 0.45,
+            "r": 0.22,
+            "pitch": 0.16,
+            "helix_axis": [1, 0, 1]
+        }
+    ],
+    "test_trajectories": [
+        
+        
+    ]
+}

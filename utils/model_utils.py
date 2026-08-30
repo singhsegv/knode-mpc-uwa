@@ -120,7 +120,10 @@ def evaluate_model(model, test_data, open_loop=True):
             u = current_state[:, 2 * nq :]
 
             nominal_qddot = model.func.compute_nominal(x, xdot, u)
+
             residual_temp = model.func.residual_dynamics_network(x)
+            # residual_temp = model.func.residual_dynamics_network(torch.cat([x, xdot], dim=1))
+
             zeros_q = torch.zeros(current_state.shape[0], nq, dtype=current_state.dtype, device=current_state.device)
             zeros_tau = torch.zeros(current_state.shape[0], nq, dtype=current_state.dtype, device=current_state.device)
             residual_qddot = torch.cat([zeros_q, residual_temp, zeros_tau], dim=1)

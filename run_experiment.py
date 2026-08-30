@@ -16,6 +16,7 @@ import numpy as np
 
 from knode.learn import train_model
 from knode.model import ManipulatorKnodeModel
+# from knode.underwater_model import ManipulatorKnodeModel
 from utils.data_utils import load_data
 from utils.log_utils import Tee
 from utils.training_data_generator import collect, save_log, plot_collected_trajectory
@@ -104,7 +105,7 @@ def main():
     parser.add_argument("--lookahead", type=int, default=2, help="Override lookahead for NODE (default: 2)")
     parser.add_argument("--epochs", type=int, default=15000, help="Override training epochs (default: 15k)")
     parser.add_argument("--lr", type=float, default=0.001, help="Override learning rate")
-    parser.add_argument("--robot", type=str, default="ur5", help="Robot config name under config/robot/ (default: dataset robot or ur5)")
+    parser.add_argument("--robot", type=str, default="perfect-ur5", help="Robot config name under config/robot/ (default: dataset robot or ur5)")
     args = parser.parse_args()
 
     dataset_cfg, dataset_cfg_path = load_json_config(DATASETS_CONFIG_DIR, args.dataset)

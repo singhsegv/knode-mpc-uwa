@@ -14,6 +14,9 @@ PROJECT_ROOT = os.path.dirname(SCRIPT_DIR)
 if PROJECT_ROOT not in sys.path:
     sys.path.insert(0, PROJECT_ROOT)
 
+import matplotlib
+
+matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import numpy as np
 import torch
@@ -172,8 +175,8 @@ def collect(spec, robot, enable_viz=False, knode_model=None, dt=None):
         if knode_model is not None:
             q, qdot = step_with_knode(knode_model, q, qdot, tau, dt)
         else:
-            # q, qdot = robot.step_torchdiffeq(q, qdot, tau, dt)
-            q, qdot = robot.underwater_step_torchdiffeq(q, qdot, tau, dt)
+            # q, qdot = robot.underwater_step_torchdiffeq(q, qdot, tau, dt)
+            q, qdot = robot.plant_step(q, qdot, tau, dt) # Underwater step
 
     meta = dict(spec)
     meta["n_steps"] = n_steps
@@ -312,7 +315,7 @@ def plot_collected_trajectory(
 def main():
     parser = argparse.ArgumentParser(description="Collect trajectory training data from a JSON config.")
     parser.add_argument("--config", type=str, default=DEFAULT_CONFIG_NAME, help="Dataset Comfiguration: JSON filename (without .json)")
-    parser.add_argument("--robot-config", type=str, default="ur5", help="Robot Configuration: JSON filename (without .json)")
+    parser.add_argument("--robot-config", type=str, default="mujoco-perfect-ur5", help="Robot Configuration: JSON filename (without .json)")
     parser.add_argument("--output-dir", type=str, default=None, help="Directory for .npz files")
     parser.add_argument("--viz", action="store_true", help="Enable Meshcat visualization")
     parser.add_argument("--name", type=str, help="Custom output folder name override")

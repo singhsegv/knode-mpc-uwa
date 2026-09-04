@@ -9,6 +9,7 @@ dependencies:
   - pytorch
   - pip
   - pip:
+    - mujoco
     - robot_descriptions
     - xacrodoc
 prefix: /Users/singhsegv/miniconda3/envs/planar-uwa

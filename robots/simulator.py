@@ -1,9 +1,12 @@
 import os
 import json
+import shutil
+import tempfile
 
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 PROJECT_ROOT = os.path.dirname(SCRIPT_DIR)
 ROBOT_CONFIG_DIR = os.path.join(PROJECT_ROOT, "config", "robot")
+SCENES_DIR = os.path.join(SCRIPT_DIR, "scenes")
 
 import numpy as np
 import mujoco
@@ -11,10 +14,41 @@ import mujoco
 import torch
 from torchdiffeq import odeint
 
-from robot_descriptions.loaders.mujoco import load_robot_description
+from robot_descriptions import ur5e_mj_description
 
 
 DEFAULT_ROBOT_NAME = "ur5"
+
+
+def _menagerie_ur5e_dir():
+    """Cached mujoco_menagerie universal_robots_ur5e directory (via robot_descriptions)."""
+    return os.path.dirname(ur5e_mj_description.MJCF_PATH)
+
+
+def load_mjcf_scene(scene_name):
+    """
+    Load a project scene XML that <include>s Menagerie ur5e.xml.
+
+    Stages the scene next to symlinks of Menagerie ur5e.xml + assets/ in a
+    temp directory so meshdir and include paths resolve without writing into
+    the robot_descriptions cache.
+    """
+    scene_file = scene_name if scene_name.endswith(".xml") else f"{scene_name}.xml"
+    src = os.path.join(SCENES_DIR, scene_file)
+    if not os.path.isfile(src):
+        raise FileNotFoundError(f"Scene MJCF not found: {src}")
+
+    menagerie_dir = _menagerie_ur5e_dir()
+    with tempfile.TemporaryDirectory(prefix="ur5e_scene_") as tmp:
+        for name in ("ur5e.xml", "assets"):
+            target = os.path.join(menagerie_dir, name)
+            link = os.path.join(tmp, name)
+            if not os.path.exists(target):
+                raise FileNotFoundError(f"Menagerie asset missing: {target}")
+            os.symlink(target, link)
+        dest = os.path.join(tmp, scene_file)
+        shutil.copy2(src, dest)
+        return mujoco.MjModel.from_xml_path(dest)
 
 
 def load_robot_config(name=None):
@@ -53,8 +87,7 @@ def _resolve_ee_target(model, ee_frame):
             return obj_type, target_id
 
     raise ValueError(
-        f"End-effector frame '{ee_frame}' not found in MuJoCo model. "
-        f"Tried body/site names and fallback '{fallback_name}'."
+        f"End-effector frame '{ee_frame}' not found in MuJoCo model as body or site."
     )
 
 
@@ -74,11 +107,11 @@ class Manipulator:
     def __init__(self, robot_config, enable_viz=False, gravity=None):
         self.robot_config = robot_config
 
-        mujoco_robot_model_name = robot_config["description"]
-        self.mj_model = load_robot_description(mujoco_robot_model_name)
+        scene = robot_config.get("scene")
+        if not scene:
+            raise ValueError("Robot config must set 'scene' (e.g. 'ur5e_default' or 'ur5e_underwater').")
+        self.mj_model = load_mjcf_scene(scene)
         self.mj_data = mujoco.MjData(self.mj_model)
-
-        # import pdb; pdb.set_trace()
 
         # Backward-compatible aliases -> TODO: Should be usable with pinocchio/mujoco both
         self.model = self.mj_model
@@ -87,7 +120,6 @@ class Manipulator:
         self.nq = self.mj_model.nq
         self.nv = self.mj_model.nv
 
-        # TODO: Check me
         ee_frame = robot_config["ee_frame"]
         self.ee_obj_type, self.ee_target_id = _resolve_ee_target(self.mj_model, ee_frame)
         self.task_space_dim = robot_config.get("task_space_dim", 3)
@@ -97,7 +129,7 @@ class Manipulator:
 
         self.mj_model.opt.gravity[:] = np.asarray(gravity, dtype=float)
 
-        # ur5e_mj_description ships position-PD actuators (ctrl = q_des).
+        # Menagerie UR5e ships position-PD actuators (ctrl = q_des).
         # This stack injects joint torques via qfrc_applied / inverse_dynamics,
         # so disable built-in actuation or PD fights CTC and breaks ID↔FD.
         self.mj_model.opt.disableflags |= mujoco.mjtDisableBit.mjDSBL_ACTUATION

@@ -1,0 +1,37 @@
+<!--
+  UR5e in water: same world as ur5e_default, plus MuJoCo medium density/viscosity.
+
+  Note: MuJoCo fluid forces are a global medium model (inertia-based drag/lift when
+  density/viscosity > 0), not a finite water tank. The translucent box is visual only.
+  Tune wind here or via model.opt.wind in Python for uniform current.
+-->
+<mujoco model="ur5e_underwater">
+  <include file="ur5e.xml"/>
+
+  <statistic center="0.3 0 0.4" extent="0.8"/>
+
+  <!-- water ~1000 kg/m^3, viscosity ~0.0009 Pa·s; wind = uniform current (m/s) -->
+  <option gravity="0 0 -9.81" density="1000" viscosity="0.0009" wind="0 0 0" integrator="implicitfast"/>
+
+  <visual>
+    <headlight diffuse="0.5 0.55 0.6" ambient="0.08 0.1 0.12" specular="0 0 0"/>
+    <rgba haze="0.05 0.15 0.25 1"/>
+    <global azimuth="120" elevation="-20"/>
+  </visual>
+
+  <asset>
+    <texture type="skybox" builtin="gradient" rgb1="0.05 0.2 0.35" rgb2="0 0.05 0.1" width="512" height="3072"/>
+    <texture type="2d" name="groundplane" builtin="checker" mark="edge" rgb1="0.1 0.2 0.25" rgb2="0.05 0.12 0.18"
+      markrgb="0.4 0.5 0.55" width="300" height="300"/>
+    <material name="groundplane" texture="groundplane" texuniform="true" texrepeat="5 5" reflectance="0.1"/>
+    <material name="water" rgba="0.15 0.35 0.55 0.25"/>
+  </asset>
+
+  <worldbody>
+    <light pos="0 0 1.5" dir="0 0 -1" directional="true"/>
+    <geom name="floor" size="0 0 0.05" type="plane" material="groundplane"/>
+    <!-- visual water volume only (no collision); fluid medium is still global -->
+    <geom name="water_volume" type="box" size="2 2 1.25" pos="0 0 1.25" material="water"
+      contype="0" conaffinity="0" group="1"/>
+  </worldbody>
+</mujoco>

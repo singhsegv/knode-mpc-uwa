@@ -1,25 +1,27 @@
 # Robot Models
 
-## UR5 (default)
+## MuJoCo UR5e scenes
 
-The UR5 uses [`robot_descriptions`](https://github.com/robot-descriptions/robot_descriptions.py):
+Simulation uses Menagerie UR5e via [`robot_descriptions`](https://github.com/robot-descriptions/robot_descriptions.py) (caches `mujoco_menagerie/universal_robots_ur5e/`), wrapped by project scenes in `robots/scenes/`:
+
+| Scene | Config | Medium |
+|---|---|---|
+| `ur5e_default.xml` | `mujoco-perfect-ur5` | air (`density=0`) |
+| `ur5e_underwater.xml` | `mujoco-underwater-ur5` | water (`density=1000`, `viscosity=0.0009`) |
 
 ```python
-from robot_descriptions.loaders.pinocchio import load_robot_description
+from robots.simulator import make_robot
 
-robot = load_robot_description("ur5_official_description")
+robot, robot_cfg, _ = make_robot("mujoco-perfect-ur5")
+# or: make_robot("mujoco-underwater-ur5")
 ```
 
-Configured in `config/robot/ur5.json` with `"description": "ur5_official_description"`.
+- **Floor + light:** in the scene XML (floor has normal contact)
+- **Gravity:** scene `<option gravity="...">`, overridden by config `plant_gravity` at load
+- **Fluids:** MuJoCo global medium (not a finite tank); translucent box in underwater scene is visual only
+- **Actuation:** Menagerie PD actuators are disabled; torques go through `qfrc_applied`
+- **Deps:** `pip install mujoco robot_descriptions`
 
-- **End-effector frame:** `tool0` (official ROS-Industrial convention)
-- **First run:** downloads and caches the official UR xacro/URDF under `~/.cache/robot_descriptions/`
-- **Dependencies:** `pip install robot_descriptions xacrodoc`
+## Pinocchio / URDF configs
 
-## Planar 2R (legacy)
-
-Still loaded from the local URDF at `robots/planar-2R.urdf` via `config/robot/planar.json`.
-
-## Switching robots
-
-Set `"description": "<name>_official_description"` in `config/robot/*.json` for other Universal Robots models supported by `robot_descriptions` (e.g. `ur5e_description`, `ur10_official_description`).
+`ur5.json`, `perfect-ur5.json`, `ur5-mpc.json` still use `"description": "ur5e_description"` for Pinocchio / CasADi paths.

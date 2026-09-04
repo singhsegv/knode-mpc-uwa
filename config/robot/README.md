@@ -1,4 +1,6 @@
-# Information
+# Robot configs
 
-- Current models are not cross compatible among mujoco and pinocchio (robot_descriptions vs mujoco_menagerie)
-- `mujoco-*.json` use `robot_descriptions` package but follows https://github.com/google-deepmind/mujoco_menagerie
+- `mujoco-*.json` — MuJoCo plant via `scene` → `robots/scenes/*.xml` (Menagerie UR5e)
+- other `*.json` — Pinocchio / URDF via `description` (`robot_descriptions`)
+
+Scenes are not pinocchio-compatible; keep separate configs per backend.

@@ -1,16 +1,17 @@
 """
-Similar to data_generator.py but reads from json.
+Collect closed-loop CTC training data for n-DOF manipulators (default: UR5).
+Reads trajectory specs from JSON configs under config/datasets_full_arm/.
 """
 import json
 import os
 import sys
 import time
-import torch
 import argparse
 
 import matplotlib.pyplot as plt
 import numpy as np
-from scipy.optimize import fsolve
+import torch
+from scipy.optimize import least_squares
 
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 PROJECT_ROOT = os.path.dirname(SCRIPT_DIR)
@@ -18,155 +19,80 @@ PROJECT_ROOT = os.path.dirname(SCRIPT_DIR)
 if PROJECT_ROOT not in sys.path:
     sys.path.insert(0, PROJECT_ROOT)
 
-from robots.simulator import PlanarArm
-from knode.model import PlanarArmKnodeModel
+from knode.model import ManipulatorKnodeModel
 import utils.model_utils as model_utils
 from utils.model_utils import latest_checkpoint_epoch, load_model_checkpoint
-from utils.trajectory_generator import circle_trajectory, lemniscate_trajectory, line_trajectory, rectangle_trajectory
-
-# Common thingy for all functions
-robot = PlanarArm(enable_viz=False)
-# robot = PlanarArm(enable_viz=False, gravity=np.array([0.0, -11.0, 0.0]))
-# robot = PlanarArm(enable_viz=False, gravity=np.array([0.0, 0.0, 0.0]))
-
-DOF = 2
-Kp = np.array([50.0, 50.0])
-Kd = np.array([4.0, 4.0])
+from utils.trajectory_generator import sample_trajectory, get_trajectory_start
 
 DATASETS_DIR = os.path.join(PROJECT_ROOT, "config", "datasets")
-DEFAULT_CONFIG_NAME = "standalone"
+DEFAULT_CONFIG_NAME = "ur5_demo"
 DEFAULT_OUTPUT_DIR = os.path.join(PROJECT_ROOT, "data")
 PLOT_OUTPUT_DIR = os.path.join(PROJECT_ROOT, "outputs")
 
 
-def plot_collected_trajectory(
-        t_log, q_log, qdot_log, qdd_fb_log, tau_log,
-        trajectory=None, max_steps=None, output_dir=PLOT_OUTPUT_DIR, show=False,
-    ):
-    """
-    Plot collected rollout: q, qdot, qdd_fb, tau in joint space; EE path separately.
+def inverse_kinematics(robot, q_prev, pos_des, vel_des, damping=0.05, posture_weight=0.05):
+    """Numerical IK + damped least-squares velocity mapping."""
+    pos_des = np.asarray(pos_des, dtype=float)
+    vel_des = np.asarray(vel_des, dtype=float)
+    task_dim = getattr(robot, "task_space_dim", 3)
+    q_prev = np.asarray(q_prev, dtype=float)
 
-    t_log: (N,) time [s]
-    q_log, qdot_log, qdd_fb_log, tau_log: (N, 2)
-    """
-    n = len(t_log)
-    if max_steps is not None:
-        n = min(n, max_steps)
+    def fk_residual(q):
+        pos_err = robot.ee_position(q) - pos_des
+        if robot.nq > task_dim:
+            posture_err = posture_weight * (q - q_prev)
+            return np.concatenate([pos_err, posture_err])
 
-    time = t_log[:n]
-    q = q_log[:n]
-    qdot = qdot_log[:n]
-    qdd_fb = qdd_fb_log[:n]
-    tau = tau_log[:n]
-    xy = robot.ee_positions(q)
+        return pos_err
 
-    suffix = f"_{trajectory}" if trajectory is not None else ""
-    title_suffix = f" ({trajectory})" if trajectory is not None else ""
+    result = least_squares(fk_residual, q_prev, method="trf")
+    q_des = result.x
 
-    fig, axes = plt.subplots(4, 2, figsize=(12, 11), sharex=True)
-    fig.suptitle(f"Collected trajectory{title_suffix}", fontsize=13)
+    J = robot.ee_jacobian(q_des)
+    JJt = J @ J.T
+    damp = damping ** 2 * np.eye(task_dim)
+    J_pinv = J.T @ np.linalg.inv(JJt + damp)
+    qdot_des = J_pinv @ vel_des
 
-    row_specs = [
-        (q, ["q1", "q2"]),
-        (qdot, ["qdot1", "qdot2"]),
-        (qdd_fb, ["qddot1", "qddot2"]),
-        (tau, ["tau1", "tau2"]),
-    ]
-    for row, (data, labels) in enumerate(row_specs):
-        for i in range(2):
-            ax = axes[row, i]
-            ax.plot(time, data[:, i], "b-", linewidth=1.2)
-            ax.set_ylabel(labels[i])
-            ax.grid(True, alpha=0.3)
-
-    for ax in axes[-1, :]:
-        ax.set_xlabel("time [s]")
-
-    fig.tight_layout()
-
-    os.makedirs(output_dir, exist_ok=True)
-    save_path = os.path.join(output_dir, f"collected_trajectory{suffix}.png")
-    fig.savefig(save_path, dpi=150)
-
-    xy_fig, xy_ax = plt.subplots(figsize=(6, 6))
-    xy_ax.plot(xy[:, 0], xy[:, 1], "b-", linewidth=1.5)
-    xy_ax.set_xlabel("x [m]")
-    xy_ax.set_ylabel("y [m]")
-    xy_ax.set_title(f"Task-space path{title_suffix}")
-    xy_ax.axis("equal")
-    xy_ax.grid(True, alpha=0.3)
-    xy_path = os.path.join(output_dir, f"collected_task_space_path{suffix}.png")
-    xy_fig.tight_layout()
-    xy_fig.savefig(xy_path, dpi=150)
-
-    if show:
-        plt.show()
-    else:
-        plt.close(fig)
-        plt.close(xy_fig)
-
-    # print(f"Saved plots -> {save_path}, {xy_path}")
-    return fig, save_path
-
-
-def ee_fk(q):
-    """Planar 2R FK; returns EE (x, y) in the arm plane."""
-    q1, q2 = q
-    L1, L2 = 1.0, 1.0
-    c1, c12 = q1, q1 + q2
-    x = L1 * np.cos(c1) + L2 * np.cos(c12)
-    y = L1 * np.sin(c1) + L2 * np.sin(c12)
-    return np.array([x, y])
-
-
-def ik_residual(q_seed, x_des, y_des):
-    sol = ee_fk(q_seed)
-    x, y = sol[0], sol[1]
-    return x - x_des, y - y_des
+    return q_des, qdot_des
 
 
 def step_with_knode(model, q, qdot, tau, dt):
-    """One RK4 step of PlanarArmKnodeModel: (q, qdot, tau) -> (q_next, qdot_next)."""
+    """One RK4 step of ManipulatorKnodeModel: (q, qdot, tau) -> (q_next, qdot_next)."""
+    nq = model.nq
     model.eval()
     with torch.no_grad():
-        y0 = torch.tensor(np.concatenate([q, qdot, tau], axis=0)[None, :], dtype=torch.float64)
+        y0 = torch.tensor(np.concatenate([q, qdot, tau])[None, :], dtype=torch.float64)
         timesteps = torch.tensor([0.0, dt], dtype=torch.float64)
-        pred = model(y0, timesteps)  # (2, 1, 6)
+        pred = model(y0, timesteps)
         nxt = pred[-1, 0].detach().cpu().numpy()
-        
-    return nxt[:2].copy(), nxt[2:4].copy()
+    return nxt[:nq].copy(), nxt[nq : 2 * nq].copy()
 
 
-def collect(duration, trajectory, cx, cy, omega, a=None, r=None, lx0=None, ly0=None, lx1=None, ly1=None, enable_viz=False, knode_model=None, dt=None):
+def collect(spec, robot, enable_viz=False, knode_model=None, dt=None):
     """
-    Common: omega, duration
-    Circle: cx, cy, r
-    Lemniscate: cx, cy, a
-    Line: lx0, ly0, lx1, ly1
-    Rectangle: lx0, ly0, lx1, ly1
+    Collect one trajectory rollout with computed-torque control.
     """
+    kp = robot.robot_config["kp"]
+    kd = robot.robot_config["kd"]
+    nq = robot.nq
+    task_dim = getattr(robot, "task_space_dim", 3)
+    duration = spec["duration"]
     n_steps = int(duration / dt)
+
     t_log = np.empty(n_steps)
-    q_log = np.empty((n_steps, DOF))
-    qdot_log = np.empty((n_steps, DOF))
-    qdd_fb_log = np.empty((n_steps, DOF))
-    tau_log = np.empty((n_steps, DOF))
-    des_ee_pos_log = np.empty((n_steps, 2))
-    des_ee_vel_log = np.empty((n_steps, 2))
-    des_ee_acc_log = np.empty((n_steps, 2))
+    q_log = np.empty((n_steps, nq))
+    qdot_log = np.empty((n_steps, nq))
+    qdd_fb_log = np.empty((n_steps, nq))
+    tau_log = np.empty((n_steps, nq))
+    des_ee_pos_log = np.empty((n_steps, task_dim))
+    des_ee_vel_log = np.empty((n_steps, task_dim))
+    des_ee_acc_log = np.empty((n_steps, task_dim))
 
-    if trajectory == "line":
-        x_start, y_start = 0.5 * (lx0 + lx1), 0.5 * (ly0 + ly1)
-    elif trajectory == "circle":
-        x_start, y_start = cx + r, cy
-    elif trajectory == "lemniscate":
-        x_start, y_start = cx + a, cy
-    elif trajectory == "rectangle":
-        x_start, y_start, _, _, _, _ = rectangle_trajectory(0, lx0, ly0, lx1, ly1, omega=omega)
-    else:
-        raise ValueError(f"Unknown trajectory type: {trajectory}")
+    x_start, y_start, z_start = get_trajectory_start(spec)
+    pos_start = np.array([x_start, y_start, z_start])[:task_dim]
 
-    q_initial = fsolve(ik_residual, [0.5, 0.5], args=(x_start, y_start))
+    q_initial, _ = inverse_kinematics(robot, robot.get_default_config(), pos_start, np.zeros(task_dim))
     robot.move_to(q_initial)
     q = q_initial.copy()
 
@@ -174,48 +100,39 @@ def collect(duration, trajectory, cx, cy, omega, a=None, r=None, lx0=None, ly0=N
         robot.display(q)
         time.sleep(2)
 
-    qdot = np.zeros(DOF)
-    q_prev = q.copy() # Just as a seed for the solver
+    qdot = np.zeros(nq)
+    q_prev = q.copy()
 
     for i in range(n_steps):
         t = i * dt
         t_log[i] = t
 
-        if trajectory == "circle":
-            x, y, xdot, ydot, xddot, yddot = circle_trajectory(t, r=r, cx=cx, cy=cy, omega=omega)
-        elif trajectory == "lemniscate":
-            x, y, xdot, ydot, xddot, yddot = lemniscate_trajectory(t, a=a, cx=cx, cy=cy, omega=omega)
-        elif trajectory == "line":
-            x, y, xdot, ydot, xddot, yddot = line_trajectory(t, lx0, ly0, lx1, ly1, omega=omega)
-        elif trajectory == "rectangle":
-            x, y, xdot, ydot, xddot, yddot = rectangle_trajectory(t, lx0, ly0, lx1, ly1, omega=omega)
+        vals = sample_trajectory(t, spec)
+        pos_des = np.array(vals[:3])[:task_dim]
+        vel_des = np.array(vals[3:6])[:task_dim]
+        acc_des = np.array(vals[6:9])[:task_dim]
 
-        # Holding a static pose
-        # x, y, xdot, ydot, xddot, yddot = cx, cy, 0.0, 0.0, 0.0, 0.0
+        des_ee_pos_log[i] = pos_des
+        des_ee_vel_log[i] = vel_des
+        des_ee_acc_log[i] = acc_des
 
-        des_ee_pos_log[i] = (x, y)
-        des_ee_vel_log[i] = (xdot, ydot)
-        des_ee_acc_log[i] = (xddot, yddot)
-
-        # ---------------------------------------------
-        # Computer Torque Controller Implementation
-        # Why q_des in J and not the current q? Dafuq?
-        # ---------------------------------------------
-        q_des = fsolve(ik_residual, q_prev, args=(x, y))
+        # -------------------------------------------------------------------------------------
+        # TODO: FIXME, I'm sketchy
+        q_des, qdot_des = inverse_kinematics(robot, q_prev, pos_des, vel_des)
         J = robot.ee_jacobian(q_des)
-        J_inv = np.linalg.inv(J)
-
-        qdot_des = J_inv @ np.array([xdot, ydot])
-        qddot_des = J_inv @ np.array([xddot, yddot]) # TODO: Missing J dot thingy
+        task_dim_local = J.shape[0]
+        JJt = J @ J.T
+        damp = 0.05 ** 2 * np.eye(task_dim_local)
+        J_pinv = J.T @ np.linalg.inv(JJt + damp)
+        qddot_des = J_pinv @ acc_des # TODO: Missing possibly qdot terms here like the planar thingy
         q_prev = q_des.copy()
+        # -------------------------------------------------------------------------------------
 
         e = q_des - q
         ed = qdot_des - qdot
-        qdd_fb = qddot_des + Kp * e + Kd * ed
+        qdd_fb = qddot_des + kp * e + kd * ed
         tau = robot.inverse_dynamics(q, qdot, qdd_fb).copy()
-        # tau = np.array([0.0, 0.0, 0.0])
 
-        # TODO: We might be sketchy: Check data written at the beginning/end of the step
         q_log[i] = q.copy()
         qdot_log[i] = qdot.copy()
         qdd_fb_log[i] = qdd_fb.copy()
@@ -224,12 +141,14 @@ def collect(duration, trajectory, cx, cy, omega, a=None, r=None, lx0=None, ly0=N
         if enable_viz:
             robot.display(q)
 
-        # These get saved in the next iteration
-        # q, qdot = robot.step_rk4(q, qdot, tau, DT)
         if knode_model is not None:
             q, qdot = step_with_knode(knode_model, q, qdot, tau, dt)
         else:
             q, qdot = robot.step_torchdiffeq(q, qdot, tau, dt)
+
+    meta = dict(spec)
+    meta["n_steps"] = n_steps
+    meta["trajectory"] = spec["type"]
 
     return {
         "t": t_log,
@@ -241,44 +160,8 @@ def collect(duration, trajectory, cx, cy, omega, a=None, r=None, lx0=None, ly0=N
         "des_ee_vel": des_ee_vel_log,
         "des_ee_acc": des_ee_acc_log,
         "dt": dt,
-        "meta": {
-            "trajectory": trajectory,
-            "duration": duration,
-            "n_steps": n_steps,
-            "r": r,
-            "a": a,
-            "cx": cx,
-            "cy": cy,
-            "omega": omega,
-            "lx0": lx0,
-            "ly0": ly0,
-            "lx1": lx1,
-            "ly1": ly1,
-        },
+        "meta": meta,
     }
-
-
-def collect_from_spec(spec, enable_viz=False, knode_model=None, dt=None):
-    trajectory = spec["type"]
-    duration = spec.get("duration", -1)
-    omega = spec.get("omega", -1)
-
-    return collect(
-        duration=duration,
-        trajectory=trajectory,
-        cx=spec.get("cx"),
-        cy=spec.get("cy"),
-        omega=omega,
-        a=spec.get("a"),
-        r=spec.get("r"),
-        lx0=spec.get("lx0"),
-        ly0=spec.get("ly0"),
-        lx1=spec.get("lx1"),
-        ly1=spec.get("ly1"),
-        enable_viz=enable_viz,
-        knode_model=knode_model,
-        dt=dt,
-    )
 
 
 def save_log(output_path, log):
@@ -298,64 +181,172 @@ def save_log(output_path, log):
     )
 
 
+def plot_collected_trajectory(
+    t_log, q_log, qdot_log, qdd_fb_log, tau_log, robot,
+    trajectory=None, label=None, max_steps=None, output_dir=PLOT_OUTPUT_DIR, show=False,
+    des_ee_pos=None,
+):
+    """Plot collected rollout in joint space and 3D task space."""
+    n = len(t_log)
+    if max_steps is not None:
+        n = min(n, max_steps)
+
+    time = t_log[:n]
+    q = q_log[:n]
+    qdot = qdot_log[:n]
+    qdd_fb = qdd_fb_log[:n]
+    tau = tau_log[:n]
+    xyz = robot.ee_positions(q)
+    nq = robot.nq
+    ncols = min(3, nq)
+    nrows_per_qty = int(np.ceil(nq / ncols))
+
+    if label is not None:
+        suffix = f"_{label}"
+        title_suffix = f" ({label})"
+    elif trajectory is not None:
+        suffix = f"_{trajectory}"
+        title_suffix = f" ({trajectory})"
+    else:
+        suffix = ""
+        title_suffix = ""
+
+    fig, axes = plt.subplots(4 * nrows_per_qty, ncols, figsize=(4 * ncols, 2.5 * 4 * nrows_per_qty), sharex=True)
+    if nrows_per_qty * ncols == 1:
+        axes = np.array([[axes]])
+    elif nrows_per_qty == 1:
+        axes = axes.reshape(4, ncols)
+    else:
+        axes = axes.reshape(4 * nrows_per_qty, ncols)
+
+    fig.suptitle(f"Collected trajectory{title_suffix}", fontsize=13)
+
+    row_specs = [
+        (q, "q"),
+        (qdot, "qdot"),
+        (qdd_fb, "qddot"),
+        (tau, "tau"),
+    ]
+    for block, (data, prefix) in enumerate(row_specs):
+        for j in range(nq):
+            row = block * nrows_per_qty + j // ncols
+            col = j % ncols
+            ax = axes[row, col]
+            ax.plot(time, data[:, j], "b-", linewidth=1.2)
+            ax.set_ylabel(f"{prefix}{j + 1}")
+            ax.grid(True, alpha=0.3)
+
+    for col in range(ncols):
+        axes[-1, col].set_xlabel("time [s]")
+
+    fig.tight_layout()
+
+    os.makedirs(output_dir, exist_ok=True)
+    save_path = os.path.join(output_dir, f"collected_trajectory{suffix}.png")
+    fig.savefig(save_path, dpi=150)
+
+    task_dim = getattr(robot, "task_space_dim", 3)
+    if task_dim == 3:
+        from utils.robot_viz import save_task_space_3d_figure
+
+        des = None
+        if des_ee_pos is not None:
+            des = des_ee_pos[:n]
+        xyz_path = os.path.join(output_dir, f"collected_task_space_path{suffix}.png")
+        save_task_space_3d_figure(
+            robot, q, xyz, ee_desired=des,
+            title=f"Task-space path (3D){title_suffix}",
+            save_path=xyz_path, show=False,
+        )
+    else:
+        xy_fig, xy_ax = plt.subplots(figsize=(6, 6))
+        xy_ax.plot(xyz[:, 0], xyz[:, 1], "b-", linewidth=1.5)
+        xy_ax.set_xlabel("x [m]")
+        xy_ax.set_ylabel("y [m]")
+        xy_ax.set_title(f"Task-space path{title_suffix}")
+        xy_ax.axis("equal")
+        xy_ax.grid(True, alpha=0.3)
+        xyz_path = os.path.join(output_dir, f"collected_task_space_path{suffix}.png")
+        xy_fig.tight_layout()
+        xy_fig.savefig(xyz_path, dpi=150)
+        plt.close(xy_fig)
+
+    if show:
+        plt.show()
+    else:
+        plt.close(fig)
+
+    return fig, save_path
+
+
 def main():
-    parser = argparse.ArgumentParser(description="Collect trajectory training data from a JSON config at 500 Hz (Pinocchio).")
-    parser.add_argument("--config", type=str, default=DEFAULT_CONFIG_NAME, help="JSON filename under configurations/datasets/")
-    parser.add_argument("--output-dir", type=str, default=None, help="Directory for .npz files (default: data/<config name>/)",)
+    parser = argparse.ArgumentParser(description="Collect trajectory training data from a JSON config.")
+    parser.add_argument("--config", type=str, default=DEFAULT_CONFIG_NAME, help="Dataset Comfiguration: JSON filename (without .json)")
+    parser.add_argument("--robot-config", type=str, default="ur5", help="Robot Configuration: JSON filename (without .json)")
+    parser.add_argument("--output-dir", type=str, default=None, help="Directory for .npz files")
     parser.add_argument("--viz", action="store_true", help="Enable Meshcat visualization")
-    parser.add_argument("--name", type=str, help="Custom name override")
-    parser.add_argument("--custom-dynamics", action="store_true", help="Enable custom NN for forward integration")
-    
+    parser.add_argument("--name", type=str, help="Custom output folder name override")
+    parser.add_argument("--custom-dynamics", action="store_true", help="Integrate with a learned KNODE model")
+    parser.add_argument("--knode-run", type=str, default=None, help="Path to KNODE run directory for custom dynamics")
     args = parser.parse_args()
 
     config_path = os.path.join(DATASETS_DIR, f"{args.config}.json")
     with open(config_path) as f:
         config = json.load(f)
 
-    if args.name:
-        combo_name = args.name
-    else:
-        combo_name = config["name"]
-
+    combo_name = args.name or config["name"]
     output_dir = args.output_dir or os.path.join(DEFAULT_OUTPUT_DIR, combo_name)
+    dt = config["dt"]
+
+    robot, robot_config = make_robot(args.robot_config)
 
     if args.viz:
         robot.enable_visualization()
 
-    model = None
+    # model = None
+    # if args.custom_dynamics:
+    #     if args.knode_run is None:
+    #         raise ValueError("--knode-run is required with --custom-dynamics")
 
-    dt = config["dt"]
+    #     model_cfg = {
+    #         "step_size": dt,
+    #         "nominal_only": False,
+    #         "perfect_nominal": False,
+    #         "hidden_layers": 2,
+    #         "hidden_neurons": 128,
+    #         "activation": "tanh",
+    #     }
+    #     model = ManipulatorKnodeModel(model_cfg, robot_config=robot_config).to(torch.float64)
+    #     model_utils.CHECKPOINT_DIR = os.path.join(args.knode_run, "checkpoints")
+    #     epoch = latest_checkpoint_epoch()
+    #     if epoch is None:
+    #         raise FileNotFoundError(f"No checkpoints found under {model_utils.CHECKPOINT_DIR}")
+    #     load_model_checkpoint(model, epoch)
+    #     print(f"Loaded KNODE checkpoint epoch {epoch}")
 
-    # Only for Standalone script
-    if args.custom_dynamics:
-        model_cfg = {"step_size": DT, "nominal_only": False, "perfect_nominal": False, "hidden_layers": 2,  "hidden_neurons": 128, "activation": "tanh"}
-        model = PlanarArmKnodeModel(model_cfg).to(torch.float64)
-        run_dir = "/Users/singhsegv/upenn-research-scalar/implementations/learning-manipulator-dynamics/knode-mpc-planar-arm/runs/20260715_213721_evaluation1_basic1"
-        model_utils.CHECKPOINT_DIR = os.path.join(run_dir, "checkpoints")
-        epoch = latest_checkpoint_epoch()
+    splits = ["train", "test"]
+    for split in splits:
+        key = f"{split}_trajectories"
+        specs = config[key]
+        split_dir = os.path.join(output_dir, split)
+        os.makedirs(split_dir, exist_ok=True)
 
-        if epoch is None:
-            raise FileNotFoundError(f"No checkpoints found under {os.path.join(SCRIPT_DIR, 'checkpoints')}")
+        for i, spec in enumerate(specs):
+            output_path = os.path.join(split_dir, f"{i:02d}_{spec['type']}.npz")
+            log = collect(spec, robot, enable_viz=args.viz, knode_model=None, dt=dt)
+            save_log(output_path, log)
+            print(f"Saved {len(log['t'])} samples at {1.0 / dt:.0f} Hz -> {output_path}")
 
-        load_model_checkpoint(model, epoch)
-        print(f"Loaded KNODE checkpoint epoch {epoch}")
-
-    # Only creates the training trajectories
-    specs = config[f"train_trajectories"]
-    for i, spec in enumerate(specs):
-        output_path = os.path.join(output_dir, f"{i:02d}_{spec['type']}.npz")
-        log = collect_from_spec(spec, enable_viz=args.viz, knode_model=model, dt=dt)
-        save_log(output_path, log)
-        print(f"Saved {len(log['t'])} samples at {1.0 / dt:.0f} Hz -> {output_path}")
-
-        plot_collected_trajectory(
-            t_log=log["t"], q_log=log["q"], qdot_log=log["qdot"],
-            qdd_fb_log=log["qdd_fb"], tau_log=log["tau"],
-            trajectory=log["meta"]["trajectory"],
-            max_steps=log["meta"]["n_steps"], show=False,
-            output_dir=os.path.dirname(output_path),
-        )
-
+            plot_collected_trajectory(
+                t_log=log["t"], q_log=log["q"], qdot_log=log["qdot"],
+                qdd_fb_log=log["qdd_fb"], tau_log=log["tau"], robot=robot,
+                label=f"{i:02d}_{spec['type']}",
+                trajectory=spec["type"],
+                max_steps=log["meta"]["n_steps"], show=False,
+                output_dir=split_dir,
+                des_ee_pos=log["des_ee_pos"],
+            )
+            
 
 if __name__ == "__main__":
     main()

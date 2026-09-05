@@ -3,7 +3,7 @@ import numpy as np
 from torch import nn
 from torchdiffeq import odeint_adjoint
 
-from robots.simulator import PlanarArm
+from robots.simulator import Manipulator, load_robot_config
 
 
 ACTIVATIONS = {
@@ -15,9 +15,7 @@ ACTIVATIONS = {
 
 
 def create_residual_mlp(input_dim, output_dim, hidden_layers, hidden_neurons, activation):
-    """
-    Build MLP: input -> (Linear+act) * hidden_layers -> Linear(output).
-    """
+    """Build MLP: input -> (Linear+act) * hidden_layers -> Linear(output)."""
     act_name = activation.lower()
 
     if act_name not in ACTIVATIONS:
@@ -38,17 +36,20 @@ def create_residual_mlp(input_dim, output_dim, hidden_layers, hidden_neurons, ac
     return nn.Sequential(*layers)
 
 
-class PlanarArmODEFunc(nn.Module):
-    """
-    Vector field for the manipulator model.
-    """
+class ManipulatorODEFunc(nn.Module):
+    """Vector field for an n-DOF manipulator K-NODE model."""
+
     def __init__(self, robot, model_cfg):
         super().__init__()
         self.robot = robot
+        self.nq = robot.nq
+        self.nv = robot.nv
+        self.state_dim = 3 * self.nq
 
-        # Input Size: 2 (q1, q2) | Output Size: 2 (qddot1, qddot2)
+        # Input: [q1, ..., q6] | Output: [qddot1, ..., qddot6]
         self.residual_dynamics_network = create_residual_mlp(
-            input_dim=2, output_dim=2,
+            input_dim=self.nq,
+            output_dim=self.nv,
             hidden_layers=model_cfg["hidden_layers"],
             hidden_neurons=model_cfg["hidden_neurons"],
             activation=model_cfg["activation"],
@@ -63,95 +64,82 @@ class PlanarArmODEFunc(nn.Module):
 
     def compute_nominal(self, x, xdot, u):
         """
-        => With "step_rk4", the model should learn nothing.
-        => With "imperfect_dynamics_step", the model should learn gravity torque thingy similar to pinocchio's
+        This part can/should be parallelized
         """
         rows = x.shape[0]
-        output = np.zeros((rows, 6))
+        output = np.zeros((rows, self.state_dim))
 
         for idx in range(rows):
             x_np = x[idx].detach().cpu().numpy()
             xdot_np = xdot[idx].detach().cpu().numpy()
             u_np = u[idx].detach().cpu().numpy()
-
-            # NOTE: Changed now for testing MPC with gravity -9.81 vs something else
-            # NOTE: Robot object handles the calculations
-
-            # if self.perfect_nominal:
-            #     qdot, qddot = self.robot.get_nominal_dynamics(x_np, xdot_np, u_np)
-            # else:
-            #     qdot, qddot = self.robot.get_imperfect_dynamics(x_np, xdot_np, u_np)
-            
             qdot, qddot = self.robot.get_nominal_dynamics(x_np, xdot_np, u_np)
-            
-            # Controls are held constant -> output[idx, 4:] = 0
-            output[idx, 0:2] = qdot
-            output[idx, 2:4] = qddot
+            output[idx, : self.nq] = qdot
+            output[idx, self.nq : 2 * self.nq] = qddot
 
         output = torch.from_numpy(output).to(x.device, dtype=x.dtype)
         return output
 
-
     def forward(self, t, z):
         """
-        NOTE: t is there due to torchdiffeq shizz. Not used.
-        State Z (9x1) => [X, u] => [q1, q2, q3, qdot1, qdot2, qdot3, tau1, tau2, tau2]
+        State z => [q, qdot, tau] with shape (batch, 3*nq).
+        Returns dz/dt with torques held constant (d tau / dt = 0).
         """
-        x, xdot, u = z[:, 0:2], z[:, 2:4], z[:, 4:]
+        x = z[:, : self.nq]
+        xdot = z[:, self.nq : 2 * self.nq]
+        u = z[:, 2 * self.nq :]
 
         nominal_dynamics = self.compute_nominal(x, xdot, u)
 
         if self.nominal_only:
             return nominal_dynamics
 
-        # residual_dynamics = self.residual_dynamics_network(self.normalize_residual_input(z))
         residual_dynamics = self.residual_dynamics_network(x)
-        zeros = torch.zeros(z.shape[0], 2, dtype=z.dtype, device=z.device)
-
-        # Adds residual dynamics: (qdot + 0, qddot + residual, 0 + 0)
-        residual_dynamics = torch.cat([zeros.clone(), residual_dynamics, zeros.clone()], dim=1)
+        zeros_q = torch.zeros(z.shape[0], self.nq, dtype=z.dtype, device=z.device)
+        zeros_tau = torch.zeros(z.shape[0], self.nq, dtype=z.dtype, device=z.device)
+        residual_dynamics = torch.cat([zeros_q, residual_dynamics, zeros_tau], dim=1) # [qdot, qddot, tau_dot]
         dynamics = nominal_dynamics + residual_dynamics
         return dynamics
 
 
-class PlanarArmKnodeModel(nn.Module):
-    """
-    Wrapper that integrates the planar arm dynamics over time.
-    """
-    def __init__(self, model_cfg, gravity=np.array([0.0, -9.81, 0.0])):
-        """
-        nominal_only: Nominal can be perfect/imperfect -> This flag just removes the residual
-        perfect_nominal: Perfect or Imperfect nominal model
-        """
+class ManipulatorKnodeModel(nn.Module):
+    """Wrapper that integrates manipulator dynamics over time."""
+
+    def __init__(self, model_cfg, robot_config):
         super().__init__()
 
-        self.step_size = model_cfg.get("step_size", 0.002)
+        self.step_size = model_cfg.get("step_size", 0.01)
         self.nominal_only = model_cfg.get("nominal_only", False)
         self.perfect_nominal = model_cfg.get("perfect_nominal", False)
 
-        if self.perfect_nominal:
-            self.robot = PlanarArm()
-        else:
-            self.robot = PlanarArm(gravity=gravity)
+        self.robot_config = robot_config
+        self.nq = robot_config["nq"]
+        self.nv = robot_config["nv"]
 
-        self.func = PlanarArmODEFunc(robot=self.robot, model_cfg=model_cfg)
-        
+        if self.perfect_nominal:
+            self.robot = Manipulator(robot_config=robot_config, gravity=np.array([0.0, 0.0, -9.81]))
+        else:
+            self.robot = Manipulator(robot_config=robot_config, gravity=robot_config["model_gravity"])
+
+        self.func = ManipulatorODEFunc(robot=self.robot, model_cfg=model_cfg)
+
     def _integrate_zoh(self, y0, step_torques):
         """
         Piecewise RK4 with zero-order-hold torques.
-
-        step_torques: (batch, n_steps, 2) — tau held constant during each step.
-        Returns (n_steps + 1, batch, 6), same layout as odeint (includes y0 at index 0).
+        step_torques: (batch, n_steps, nq)
+        Returns (n_steps + 1, batch, 3*nq).
         """
         n_steps = step_torques.shape[1]
-        step_times = torch.tensor(
-            [0.0, self.step_size], dtype=y0.dtype, device=y0.device,
-        )
+        step_times = torch.tensor([0.0, self.step_size], dtype=y0.dtype, device=y0.device)
         states = [y0]
         current = y0
+
+        # TODO: Check our correct index in the GT stored data: [q, qdot, tau] should be correct
+        tau_idx_start = 2 * self.nq
+        tau_idx_end = 3 * self.nq
         for k in range(n_steps):
             current = current.clone()
-            current[:, 4:6] = step_torques[:, k, :]
+            current[:, tau_idx_start:tau_idx_end] = step_torques[:, k, :]
             segment = odeint_adjoint(
                 self.func, current, step_times,
                 method="rk4", options={"step_size": self.step_size},
@@ -162,18 +150,14 @@ class PlanarArmKnodeModel(nn.Module):
         return torch.stack(states, dim=0)
 
     def forward(self, y0, timesteps=None, step_torques=None):
-        """
-        Integrate from y0. If step_torques is given, use ZOH torque per step
-        (required for correct multi-step training). Otherwise integrate continuously
-        with dtau/dt = 0 (valid only for a single step).
-        """
         if step_torques is not None:
             return self._integrate_zoh(y0, step_torques)
+
         if timesteps is None:
             raise ValueError("Provide timesteps or step_torques.")
+
         if len(timesteps) > 2:
             raise ValueError(
-                "Continuous integration with frozen tau is wrong for lookahead > 2. "
-                "Pass step_torques with one tau per step."
-            )
+                "Continuous integration with frozen tau is wrong for lookahead > 2.\nPass step_torques with one tau per step.")
+
         return odeint_adjoint(self.func, y0, timesteps, method="rk4", options={"step_size": self.step_size})

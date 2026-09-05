@@ -1,0 +1,49 @@
+{
+    "name": "ur5_basic",
+    "description": "Basic UR5 training set with circle, line, and rectangle trajectories",
+    "robot": "ur5",
+    "dt": 0.01,
+    "train_trajectories": [
+        {
+            "type": "circle",
+            "duration": 10.0,
+            "omega": 0.5,
+            "cx": 0.47,
+            "cy": 0.11,
+            "cz": 0.42,
+            "r": 0.06
+        },
+        {
+            "type": "line",
+            "duration": 10.0,
+            "omega": 0.4,
+            "lx0": 0.42,
+            "ly0": 0.08,
+            "lx1": 0.52,
+            "ly1": 0.14,
+            "lz0": 0.40,
+            "lz1": 0.44
+        },
+        {
+            "type": "rectangle",
+            "duration": 16.0,
+            "omega": 0.25,
+            "lx0": 0.42,
+            "ly0": 0.08,
+            "lx1": 0.52,
+            "ly1": 0.14,
+            "cz": 0.42
+        }
+    ],
+    "test_trajectories": [
+        {
+            "type": "circle",
+            "duration": 10.0,
+            "omega": 0.6,
+            "cx": 0.45,
+            "cy": 0.12,
+            "cz": 0.41,
+            "r": 0.05
+        }
+    ]
+}

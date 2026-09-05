@@ -3,150 +3,96 @@ import sys
 
 import numpy as np
 import matplotlib.pyplot as plt
-from scipy.optimize import fsolve
+from scipy.optimize import least_squares
 
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 PROJECT_ROOT = os.path.dirname(SCRIPT_DIR)
 if PROJECT_ROOT not in sys.path:
     sys.path.insert(0, PROJECT_ROOT)
 
-from utils.trajectory_generator import (
-    circle_trajectory,
-    lemniscate_trajectory,
-    line_trajectory,
-    rectangle_trajectory,
-)
+from utils.trajectory_generator import sample_trajectory, get_trajectory_start
 
 
-def get_joint_space_trajectory_mpc(start_time, mpc_horizon, dt):
-    """ Not so visually pleasing trajectories. """
-    nx = 4
-    X_ref = np.zeros((nx, mpc_horizon + 1))
-
-    for i in range(mpc_horizon + 1):
-        t = start_time + (i * dt)
-        q1_ref = 0.5 * np.sin(2.0 * t)
-        q2_ref = 0.5 * np.cos(2.0 * t)
-        qdot1_ref = 1.0 * np.cos(2.0 * t)
-        qdot2_ref = -1.0 * np.sin(2.0 * t)
-
-        # NOTE: Column based stuff for CasADi
-        X_ref[:, i] = np.array([q1_ref, q2_ref, qdot1_ref, qdot2_ref])
-
-    return X_ref
-
-
-def task_space_circle_trajectory(t, r=0.25, cx=0.5, cy=0.5, omega=1.0):
-    phi = omega * t
-    c, s = np.cos(phi), np.sin(phi)
-    x = cx + r * c
-    y = cy + r * s
-    xdot = -r * omega * s
-    ydot = r * omega * c
-    xddot = -r * omega**2 * c
-    yddot = -r * omega**2 * s
-    return x, y, xdot, ydot, xddot, yddot
+def _task_dim(robot):
+    return getattr(robot, "task_space_dim", 3)
 
 
 def sample_task_space_trajectory(t, spec):
     """Sample desired task-space pose from a dataset trajectory spec."""
-    trajectory = spec["type"]
-    omega = spec.get("omega", 0.3)
-
-    if trajectory == "circle":
-        return circle_trajectory(t, r=spec["r"], cx=spec["cx"], cy=spec["cy"], omega=omega)
-    if trajectory == "lemniscate":
-        return lemniscate_trajectory(t, a=spec["a"], cx=spec["cx"], cy=spec["cy"], omega=omega)
-    if trajectory == "line":
-        return line_trajectory(t, spec["lx0"], spec["ly0"], spec["lx1"], spec["ly1"], omega=omega)
-    if trajectory == "rectangle":
-        return rectangle_trajectory(t, spec["lx0"], spec["ly0"], spec["lx1"], spec["ly1"], omega=omega)
-
-    raise ValueError(f"Unknown trajectory type: {trajectory}")
+    return sample_trajectory(t, spec)
 
 
 def get_trajectory_start_position(spec):
-    """Return the task-space start position for a trajectory spec."""
-    trajectory = spec["type"]
-    omega = spec.get("omega", 0.3)
-
-    if trajectory == "line":
-        return 0.5 * (spec["lx0"] + spec["lx1"]), 0.5 * (spec["ly0"] + spec["ly1"])
-    if trajectory == "circle":
-        return spec["cx"] + spec["r"], spec["cy"]
-    if trajectory == "lemniscate":
-        return spec["cx"] + spec["a"], spec["cy"]
-    if trajectory == "rectangle":
-        x, y, _, _, _, _ = rectangle_trajectory(
-            0, spec["lx0"], spec["ly0"], spec["lx1"], spec["ly1"], omega=omega
-        )
-        return x, y
-
-    raise ValueError(f"Unknown trajectory type: {trajectory}")
+    """Return the task-space start position (x, y, z) for a trajectory spec."""
+    return get_trajectory_start(spec)
 
 
-def ee_fk(q):
-    """Planar 2R FK; returns EE (x, y) in the arm plane."""
-    q1, q2 = q
-    L1, L2 = 1.0, 1.0
-    c1, c12 = q1, q1 + q2
-    x = L1 * np.cos(c1) + L2 * np.cos(c12)
-    y = L1 * np.sin(c1) + L2 * np.sin(c12)
-    return np.array([x, y])
+def inverse_kinematics(robot, q_prev, pos_des, vel_des, damping=0.05, posture_weight=0.05):
+    """
+    Numerical IK using Pinocchio FK and damped least-squares velocity mapping.
+    pos_des: (3,) desired EE position
+    vel_des: (3,) desired EE linear velocity
+    """
+    pos_des = np.asarray(pos_des, dtype=float)
+    vel_des = np.asarray(vel_des, dtype=float)
+    task_dim = getattr(robot, "task_space_dim", 3)
+    q_prev = np.asarray(q_prev, dtype=float)
 
+    def fk_residual(q):
+        pos_err = robot.ee_position(q) - pos_des
+        if robot.nq > task_dim:
+            posture_err = posture_weight * (q - q_prev)
+            return np.concatenate([pos_err, posture_err])
+        return pos_err
 
-def ik_residual(q_seed, x_des, y_des):
-    sol = ee_fk(q_seed)
-    x, y = sol[0], sol[1]
-    return x - x_des, y - y_des
+    result = least_squares(fk_residual, q_prev, method="trf")
+    q_des = result.x
 
-
-def inverse_kinematics(robot, q_prev, x, y, xdot, ydot):
-    q_des = fsolve(ik_residual, q_prev, args=(x, y))
     J = robot.ee_jacobian(q_des)
-    J_inv = np.linalg.inv(J)
-    qdot_des = J_inv @ np.array([xdot, ydot])
+    JJt = J @ J.T
+    damp = damping ** 2 * np.eye(JJt.shape[0])
+    J_pinv = J.T @ np.linalg.inv(JJt + damp)
+    qdot_des = J_pinv @ vel_des
+
     return q_des, qdot_des
 
 
 def get_task_space_trajectory_mpc(start_time, mpc_horizon, dt, robot, q_prev, spec=None):
-    nx = 4
+    nq = robot.nq
+    nx = 2 * nq
     X_ref = np.zeros((nx, mpc_horizon + 1))
 
     for i in range(mpc_horizon + 1):
         t = start_time + (i * dt)
         if spec is None:
-            x, y, xdot, ydot, xddot, yddot = task_space_circle_trajectory(t)
+            x, y, z = 0.4, 0.2, 0.4
+            xdot = ydot = zdot = 0.0
         else:
-            x, y, xdot, ydot, xddot, yddot = sample_task_space_trajectory(t, spec)
+            x, y, z, xdot, ydot, zdot, _, _, _ = sample_task_space_trajectory(t, spec)
 
-        q_des, qdot_des = inverse_kinematics(robot, q_prev, x, y, xdot, ydot)
-
-        q1_des, q2_des, qdot1_des, qdot2_des = q_des[0], q_des[1], qdot_des[0], qdot_des[1]
-
-        # NOTE: Column based stuff for CasADi
-        X_ref[:, i] = np.array([q1_des, q2_des, qdot1_des, qdot2_des])
-
+        q_des, qdot_des = inverse_kinematics(
+            robot, q_prev, np.array([x, y, z]), np.array([xdot, ydot, zdot]),
+        )
+        X_ref[:, i] = np.concatenate([q_des, qdot_des])
         q_prev = q_des.copy()
 
     return X_ref
 
 
 def get_desired_task_space_from_history(history_x, dt, spec=None):
-    """Reconstruct desired EE (x, y) at each logged state."""
+    """Reconstruct desired EE (x, y, z) at each logged state."""
     n = len(history_x)
-    desired_xy = np.zeros((n, 2))
+    desired_xyz = np.zeros((n, 3))
 
     for i in range(n):
         t = i * dt
         if spec is None:
-            x, y, _, _, _, _ = task_space_circle_trajectory(t)
-            desired_xy[i] = (x, y)
+            desired_xyz[i] = (0.4, 0.2, 0.4)
         else:
-            x, y, _, _, _, _ = sample_task_space_trajectory(t, spec)
-            desired_xy[i] = (x, y)
+            x, y, z, _, _, _, _, _, _ = sample_task_space_trajectory(t, spec)
+            desired_xyz[i] = (x, y, z)
 
-    return desired_xy
+    return desired_xyz
 
 
 def dtw_distance(series_a, series_b):
@@ -170,16 +116,17 @@ def dtw_distance(series_a, series_b):
     return total, total / max(n, m)
 
 
-def compute_task_space_tracking_stats(history_x, dt, spec=None):
+def compute_task_space_tracking_stats(history_x, robot, dt, spec=None):
     """Compute task-space tracking error statistics."""
     history_x = np.asarray(history_x)
-    actual_xy = np.array([ee_fk(q) for q in history_x[:, :2]])
-    desired_xy = get_desired_task_space_from_history(history_x, dt, spec=spec)
-    errors = np.linalg.norm(actual_xy - desired_xy, axis=1)
-    dtw_total, dtw_mean = dtw_distance(actual_xy, desired_xy)
+    nq = robot.nq
+    actual_xyz = np.array([robot.ee_position(q) for q in history_x[:, :nq]])
+    desired_xyz = get_desired_task_space_from_history(history_x, dt, spec=spec)
+    errors = np.linalg.norm(actual_xyz - desired_xyz, axis=1)
+    dtw_total, dtw_mean = dtw_distance(actual_xyz, desired_xyz)
 
     return {
-        "task_space_rmse": float(np.sqrt(np.mean(errors**2))),
+        "task_space_rmse": float(np.sqrt(np.mean(errors ** 2))),
         "task_space_mean_error": float(np.mean(errors)),
         "task_space_max_error": float(np.max(errors)),
         "task_space_final_error": float(errors[-1]),
@@ -189,35 +136,49 @@ def compute_task_space_tracking_stats(history_x, dt, spec=None):
 
 
 def plot_task_space_tracking(history_x, robot, dt, spec=None, show=True, save_path=None):
-    """Plot tracked vs desired end-effector (x, y) from closed-loop MPC history."""
+    """Plot tracked vs desired end-effector position from closed-loop MPC history."""
     history_x = np.asarray(history_x)
     n = len(history_x)
     time = np.arange(n) * dt
+    nq = robot.nq
+    task_dim = getattr(robot, "task_space_dim", 3)
 
-    actual_xy = np.array([ee_fk(q) for q in history_x[:, :2]])
-    desired_xy = get_desired_task_space_from_history(history_x, dt, spec=spec)
+    actual_xyz = np.array([robot.ee_position(q) for q in history_x[:, :nq]])
+    desired_xyz = get_desired_task_space_from_history(history_x, dt, spec=spec)
+    q_traj = history_x[:, :nq]
 
     title_suffix = ""
     if spec is not None:
         title_suffix = f" ({spec['type']})"
 
-    fig, axes = plt.subplots(1, 2, figsize=(12, 5))
+    if task_dim == 3:
+        from utils.robot_viz import plot_task_space_3d_scene
 
-    ax_path = axes[0]
-    ax_path.plot(desired_xy[:, 0], desired_xy[:, 1], "g--", label="desired", linewidth=1.5)
-    ax_path.plot(actual_xy[:, 0], actual_xy[:, 1], "r-", label="tracked", linewidth=1.2)
-    ax_path.set_xlabel("x [m]")
-    ax_path.set_ylabel("y [m]")
-    ax_path.set_title(f"Task-space path{title_suffix}")
-    ax_path.axis("equal")
-    ax_path.grid(True, alpha=0.3)
-    ax_path.legend()
+        fig = plt.figure(figsize=(14, 6))
+        ax3d = fig.add_subplot(121, projection="3d")
+        plot_task_space_3d_scene(
+            ax3d, robot, q_traj, actual_xyz, ee_desired=desired_xyz,
+        )
+        ax3d.set_title(f"Task-space path (3D){title_suffix}")
 
-    ax_time = axes[1]
-    ax_time.plot(time, desired_xy[:, 0], "g--", label="desired x", linewidth=1.5)
-    ax_time.plot(time, desired_xy[:, 1], "g--", alpha=0.7, label="desired y", linewidth=1.5)
-    ax_time.plot(time, actual_xy[:, 0], "r-", label="tracked x", linewidth=1.2)
-    ax_time.plot(time, actual_xy[:, 1], "r-", alpha=0.7, label="tracked y", linewidth=1.2)
+        ax_time = fig.add_subplot(122)
+    else:
+        fig, axes = plt.subplots(1, 2, figsize=(12, 5))
+        ax_path = axes[0]
+        ax_path.plot(desired_xyz[:, 0], desired_xyz[:, 1], "g--", label="desired", linewidth=1.5)
+        ax_path.plot(actual_xyz[:, 0], actual_xyz[:, 1], "r-", label="tracked", linewidth=1.2)
+        ax_path.set_xlabel("x [m]")
+        ax_path.set_ylabel("y [m]")
+        ax_path.set_title(f"Task-space path (x-y){title_suffix}")
+        ax_path.axis("equal")
+        ax_path.grid(True, alpha=0.3)
+        ax_path.legend()
+        ax_time = axes[1]
+
+    for idx, label in enumerate(["x", "y", "z"][:task_dim]):
+        ax_time.plot(time, desired_xyz[:, idx], "--", alpha=0.7, label=f"desired {label}", linewidth=1.5)
+        ax_time.plot(time, actual_xyz[:, idx], "-", label=f"tracked {label}", linewidth=1.2)
+        
     ax_time.set_xlabel("time [s]")
     ax_time.set_ylabel("position [m]")
     ax_time.set_title(f"Task-space tracking vs time{title_suffix}")
@@ -234,4 +195,4 @@ def plot_task_space_tracking(history_x, robot, dt, spec=None, show=True, save_pa
     else:
         plt.close(fig)
 
-    return fig, actual_xy, desired_xy
+    return fig, actual_xyz, desired_xyz

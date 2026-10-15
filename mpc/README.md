@@ -1,6 +1,23 @@
 # MPC for 6-DOF Universal Robots UR5
 
-Closed-loop model predictive control using Pinocchio dynamics (optionally augmented with a learned K-NODE residual).
+Closed-loop model predictive control. The **plant** is simulated with MuJoCo (`robots.simulator.Manipulator`). The **MPC internal model** is built in `mpc/casadi_dynamics.py`.
+
+## Dynamics backends
+
+| Component | Engine |
+|-----------|--------|
+| Plant rollouts (data gen, MPC closed loop) | MuJoCo (`plant_step`, `step_mujoco`) |
+| K-NODE training nominal | MuJoCo (`Manipulator.forward_dynamics`) |
+| MPC optimizer model | CasADi — see `mpc_dynamics_backend` below |
+
+Set in `config/robot/*.json`:
+
+```json
+"mpc_dynamics_backend": "pinocchio"
+```
+
+- **`pinocchio`** (default): symbolic ABA via `pinocchio.casadi`. Required for **acados** and **fatrop** (they codegen smooth SX graphs).
+- **`mujoco`**: CasADi Callback over MuJoCo forward dynamics + Euler. Use with **`--solver ipopt`** when you want the MPC prediction model to match the MuJoCo plant.
 
 ## Quick Start
 

@@ -21,15 +21,17 @@ import casadi as ca
 from scipy.linalg import block_diag
 from acados_template import AcadosModel, AcadosOcp, AcadosOcpSolver
 
-import pinocchio.casadi as cpin
-
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 PROJECT_ROOT = os.path.dirname(SCRIPT_DIR)
 if PROJECT_ROOT not in sys.path:
     sys.path.insert(0, PROJECT_ROOT)
 
 from utils.model_utils import load_state_dict_from_run
-from robot_descriptions.loaders.pinocchio import load_robot_description
+from casadi_dynamics import (
+    build_pinocchio_continuous_dynamics,
+    get_pinocchio_casadi_triplet,
+    mpc_dynamics_backend,
+)
 
 
 def tensor_to_dm(t):
@@ -42,6 +44,12 @@ class AcadosManipulatorControl:
         """
         json_file must be a bare filename (Acados writes it under code_export_directory).
         """
+        if robot_config is not None and mpc_dynamics_backend(robot_config) != "pinocchio":
+            raise ValueError(
+                "Acados requires mpc_dynamics_backend='pinocchio' in the robot config. "
+                "Use --solver ipopt with mpc_dynamics_backend='mujoco' to match the MuJoCo plant."
+            )
+
         if enable_knode:
             if run_dir is None:
                 raise ValueError("run_dir is required when enable_knode=True")
@@ -77,9 +85,9 @@ class AcadosManipulatorControl:
         v = ca.SX.sym("v", nv)
         tau = ca.SX.sym("tau", nv)
 
-        qdd = cpin.aba(cmodel, cdata, q, v, tau)
+        aba_f = build_pinocchio_continuous_dynamics(cmodel, cdata)
         x = ca.vertcat(q, v)
-        xdot = ca.vertcat(v, qdd)
+        xdot = aba_f(x, tau)
         u = tau
 
         x_next = x + xdot * self.dt
@@ -103,7 +111,10 @@ class AcadosManipulatorControl:
         tau = ca.SX.sym("tau", nv)
 
         # ----------- Nominal Dynamics -----------
-        nominal_qdd = cpin.aba(cmodel, cdata, q, v, tau)
+        aba_f = build_pinocchio_continuous_dynamics(cmodel, cdata)
+        x = ca.vertcat(q, v)
+        nominal_xdot = aba_f(x, tau)
+        nominal_qdd = nominal_xdot[nq:]
 
         # ----------- Residual Dynamics -----------
         state_dict, _ = load_state_dict_from_run(self.run_dir, epoch=self.knode_epoch)
@@ -139,7 +150,7 @@ class AcadosManipulatorControl:
         # h = ca.tanh(ca.mtimes(params[2], h) + params[3])
         # residual_qdd = ca.mtimes(params[4], h) + params[5]
 
-         # ------------------------------------------------------------
+        # ------------------------------------------------------------
         # Tiny multiple hidden layer NN with 32 neurons
         # ------------------------------------------------------------
         params = [
@@ -147,11 +158,19 @@ class AcadosManipulatorControl:
             for i in (0, 2, 4, 6)
             for attr in ("weight", "bias")
         ]
-        
-        # underwater_model residual takes [q, qdot]
-        h = ca.tanh(ca.mtimes(params[0], q) + params[1])
-        # nn_in = ca.vertcat(q, v)
-        # h = ca.tanh(ca.mtimes(params[0], nn_in) + params[1])
+
+        residual_input = "q"
+        model_json = os.path.join(self.run_dir, "model.json")
+        if os.path.isfile(model_json):
+            import json
+            with open(model_json) as f:
+                residual_input = json.load(f).get("residual_input", "q")
+
+        if residual_input in ("q_qdot", "q,qdot", "qv"):
+            nn_in = ca.vertcat(q, v)
+            h = ca.tanh(ca.mtimes(params[0], nn_in) + params[1])
+        else:
+            h = ca.tanh(ca.mtimes(params[0], q) + params[1])
         h = ca.tanh(ca.mtimes(params[2], h) + params[3])
         h = ca.tanh(ca.mtimes(params[4], h) + params[5])
         residual_qdd = ca.mtimes(params[6], h) + params[7]
@@ -159,7 +178,7 @@ class AcadosManipulatorControl:
         qdd = nominal_qdd + residual_qdd
         x = ca.vertcat(q, v)
         xdot = ca.vertcat(v, qdd)
-        u = tau   
+        u = tau
 
         x_next = x + xdot * self.dt
         return x, u, x_next
@@ -188,10 +207,19 @@ class AcadosManipulatorControl:
         model.cost_y_expr = ca.vertcat(x, u)   # ny = nx + nu
         model.cost_y_expr_e = x                # terminal: only state (ny_e = nx)
 
-        q_weights = np.full(self.nq, 100.0)
-        qdot_weights = np.full(self.nv, 100.0)
+        # Default UR5-style weights; override via robot_config mpc_Q_q / mpc_Q_qd / mpc_R
+        # for CaDeLaC-matched Panda costs (state order here is [q; qd]).
+        q_weights = np.asarray(
+            self.robot_config.get("mpc_Q_q", np.full(self.nq, 100.0)), dtype=float
+        )
+        qdot_weights = np.asarray(
+            self.robot_config.get("mpc_Q_qd", np.full(self.nv, 100.0)), dtype=float
+        )
+        r_weights = np.asarray(
+            self.robot_config.get("mpc_R", np.full(self.nu, 0.01)), dtype=float
+        )
         Q = np.diag(np.concatenate([q_weights, qdot_weights]))
-        R = np.diag(np.full(self.nu, 0.01))
+        R = np.diag(r_weights)
         Q_terminal = Q * 10  # Opti: Q_terminal = Q * 10
 
         ocp = AcadosOcp()
@@ -267,13 +295,4 @@ class AcadosManipulatorControl:
         return U, X
 
     def get_casadi_pinn_model(self, gravity=None):
-        if gravity is None:
-            gravity = self.robot_config["model_gravity"]
-
-        pin_robot = load_robot_description(self.robot_config["description"])
-        model = pin_robot.model
-        model.gravity.linear = np.asarray(gravity, dtype=float)
-
-        cmodel = cpin.Model(model)
-        cdata = cmodel.createData()
-        return model, cmodel, cdata
+        return get_pinocchio_casadi_triplet(self.robot_config, gravity=gravity)

@@ -121,8 +121,10 @@ def evaluate_model(model, test_data, open_loop=True):
 
             nominal_qddot = model.func.compute_nominal(x, xdot, u)
 
-            residual_temp = model.func.residual_dynamics_network(x)
-            # residual_temp = model.func.residual_dynamics_network(torch.cat([x, xdot], dim=1))
+            if getattr(model.func, "residual_input", "q") == "q_qdot":
+                residual_temp = model.func.residual_dynamics_network(torch.cat([x, xdot], dim=1))
+            else:
+                residual_temp = model.func.residual_dynamics_network(x)
 
             zeros_q = torch.zeros(current_state.shape[0], nq, dtype=current_state.dtype, device=current_state.device)
             zeros_tau = torch.zeros(current_state.shape[0], nq, dtype=current_state.dtype, device=current_state.device)

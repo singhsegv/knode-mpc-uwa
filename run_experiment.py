@@ -79,6 +79,13 @@ def ensure_dataset(dataset_cfg, data_dir, robot):
         print(f"Using existing data in {train_dir} and {test_dir}")
         return
 
+    if "train_trajectories" not in dataset_cfg:
+        raise FileNotFoundError(
+            f"No data in {data_dir} and dataset config has no train_trajectories.\n"
+            f"For Panda payload data, run:\n"
+            f"  python -m utils.collect_panda_payload_data --dataset {dataset_cfg.get('name', 'panda_payload_exc')}"
+        )
+
     print(f"Generating train/test data from dataset config into {data_dir}...")
     if not data_dir_has_npz(train_dir):
         _generate_split(dataset_cfg["train_trajectories"], train_dir, dt, robot)
@@ -105,12 +112,13 @@ def main():
     parser.add_argument("--lookahead", type=int, default=2, help="Override lookahead for NODE (default: 2)")
     parser.add_argument("--epochs", type=int, default=15000, help="Override training epochs (default: 15k)")
     parser.add_argument("--lr", type=float, default=0.001, help="Override learning rate")
-    parser.add_argument("--robot", type=str, default="perfect-ur5", help="Robot config name under config/robot/ (default: dataset robot or ur5)")
+    parser.add_argument("--robot", type=str, default=None, help="Robot config name under config/robot/ (default: dataset robot or ur5)")
     args = parser.parse_args()
 
     dataset_cfg, dataset_cfg_path = load_json_config(DATASETS_CONFIG_DIR, args.dataset)
     model_cfg, model_cfg_path = load_json_config(MODELS_CONFIG_DIR, args.model)
-    robot, robot_cfg, robot_cfg_path = make_robot(args.robot)
+    robot_name = args.robot or dataset_cfg.get("robot", "perfect-ur5")
+    robot, robot_cfg, robot_cfg_path = make_robot(robot_name)
 
     data_name = dataset_cfg.get("name", args.dataset)
     data_dir = os.path.join(DATA_DIR, data_name)

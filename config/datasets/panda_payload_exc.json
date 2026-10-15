@@ -1,0 +1,14 @@
+{
+    "name": "panda_payload_exc",
+    "dt": 0.02,
+    "robot": "panda",
+    "n_train_envs": 20,
+    "n_eval_envs": 5,
+    "runs_per_env": 4,
+    "duration": 10.0,
+    "seed": 0,
+    "mass_range": [0.0, 4.0],
+    "pos_range": [-0.3, 0.3],
+    "include_nominal": true,
+    "notes": "Smaller CaDeLaC-style multi-payload LQR/CTC collection for local KNODE training. Full paper used 100+1 envs x 20 runs."
+}

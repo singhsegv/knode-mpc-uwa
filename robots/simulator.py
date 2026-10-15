@@ -7,6 +7,7 @@ SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 PROJECT_ROOT = os.path.dirname(SCRIPT_DIR)
 ROBOT_CONFIG_DIR = os.path.join(PROJECT_ROOT, "config", "robot")
 SCENES_DIR = os.path.join(SCRIPT_DIR, "scenes")
+PANDA_DIR = os.path.join(SCRIPT_DIR, "panda")
 
 import numpy as np
 import mujoco
@@ -51,6 +52,40 @@ def load_mjcf_scene(scene_name):
         return mujoco.MjModel.from_xml_path(dest)
 
 
+def load_panda_scene(scene_name="scene_no_collision"):
+    """Load CaDeLaC Panda scene MJCF from robots/panda/."""
+    from robots.panda_payload import panda_scene_path, compile_panda_model
+
+    if scene_name in (None, "", "scene_no_collision", "scene_no_collision.xml"):
+        return compile_panda_model(payload=None, with_inertia=False)
+    return mujoco.MjModel.from_xml_path(panda_scene_path(scene_name))
+
+
+def resolve_mj_model(robot_config):
+    """
+    Build the MuJoCo model for a robot config.
+
+    Precedence:
+      1. robot_config['mj_model'] — already-compiled MjModel (payload plants)
+      2. robot_family == 'panda' — CaDeLaC Panda scenes under robots/panda/
+      3. scene — Menagerie UR5e project scenes under robots/scenes/
+    """
+    if robot_config.get("mj_model") is not None:
+        return robot_config["mj_model"]
+
+    family = robot_config.get("robot_family", "ur5e")
+    scene = robot_config.get("scene")
+    if family == "panda":
+        return load_panda_scene(scene or "scene_no_collision")
+
+    if not scene:
+        raise ValueError(
+            "Robot config must set 'scene' (UR5e) or robot_family='panda', "
+            "or pass an mj_model for payload plants."
+        )
+    return load_mjcf_scene(scene)
+
+
 def load_robot_config(name=None):
     """Load robot config JSON and resolve model assets."""
     if name is None:
@@ -91,9 +126,12 @@ def _resolve_ee_target(model, ee_frame):
     )
 
 
-def make_robot(robot_name, enable_viz=False):
+def make_robot(robot_name, enable_viz=False, mj_model=None):
     """Build a Manipulator from a robot config name."""
     robot_config, robot_config_path = load_robot_config(robot_name)
+    if mj_model is not None:
+        robot_config = dict(robot_config)
+        robot_config["mj_model"] = mj_model
     robot = Manipulator(robot_config=robot_config, enable_viz=enable_viz)
     return robot, robot_config, robot_config_path
 
@@ -104,41 +142,51 @@ class Manipulator:
     TODO: Move to a full "position + orientation" space later.
     """
 
-    def __init__(self, robot_config, enable_viz=False, gravity=None):
-        self.robot_config = robot_config
+    def __init__(self, robot_config, enable_viz=False, gravity=None, mj_model=None):
+        self.robot_config = dict(robot_config)
+        if mj_model is not None:
+            self.robot_config["mj_model"] = mj_model
 
-        scene = robot_config.get("scene")
-        if not scene:
-            raise ValueError("Robot config must set 'scene' (e.g. 'ur5e_default' or 'ur5e_underwater').")
-        self.mj_model = load_mjcf_scene(scene)
+        self.mj_model = resolve_mj_model(self.robot_config)
         self.mj_data = mujoco.MjData(self.mj_model)
 
         # Backward-compatible aliases -> TODO: Should be usable with pinocchio/mujoco both
         self.model = self.mj_model
         self.data = self.mj_data
 
-        self.nq = self.mj_model.nq
-        self.nv = self.mj_model.nv
+        self.nq = int(self.robot_config.get("nq", self.mj_model.nq))
+        self.nv = int(self.robot_config.get("nv", self.mj_model.nv))
+        if self.nq != self.mj_model.nq or self.nv != self.mj_model.nv:
+            raise ValueError(
+                f"Config nq/nv ({self.nq}/{self.nv}) does not match MuJoCo "
+                f"({self.mj_model.nq}/{self.mj_model.nv})."
+            )
 
-        ee_frame = robot_config["ee_frame"]
+        ee_frame = self.robot_config["ee_frame"]
         self.ee_obj_type, self.ee_target_id = _resolve_ee_target(self.mj_model, ee_frame)
-        self.task_space_dim = robot_config.get("task_space_dim", 3)
+        self.task_space_dim = self.robot_config.get("task_space_dim", 3)
+
+        # Panda CaDeLaC models use direct torque motors; UR5e Menagerie uses position PD.
+        # Prefer qfrc_applied + disabled actuators for a uniform plant API.
+        self.torque_mode = self.robot_config.get("torque_mode", "qfrc_applied")
 
         if gravity is None:
-            gravity = robot_config.get("plant_gravity", np.array([0.0, 0.0, -9.81]))
+            gravity = self.robot_config.get("plant_gravity", np.array([0.0, 0.0, -9.81]))
 
         self.mj_model.opt.gravity[:] = np.asarray(gravity, dtype=float)
 
-        # Menagerie UR5e ships position-PD actuators (ctrl = q_des).
-        # This stack injects joint torques via qfrc_applied / inverse_dynamics,
-        # so disable built-in actuation or PD fights CTC and breaks ID↔FD.
-        self.mj_model.opt.disableflags |= mujoco.mjtDisableBit.mjDSBL_ACTUATION
+        if self.torque_mode == "qfrc_applied":
+            # Menagerie UR5e ships position-PD actuators (ctrl = q_des).
+            # Disable built-in actuation or PD fights CTC and breaks ID↔FD.
+            self.mj_model.opt.disableflags |= mujoco.mjtDisableBit.mjDSBL_ACTUATION
 
         self._viewer = None
         if enable_viz:
             self._init_viewer()
 
     def _init_viewer(self):
+        import mujoco.viewer
+
         self._viewer = mujoco.viewer.launch_passive(self.mj_model, self.mj_data)
 
     def _set_state(self, q, qdot):
@@ -177,15 +225,22 @@ class Manipulator:
         qddot = np.asarray(qddot, dtype=float)
         return self._mass_matrix() @ qddot + self.mj_data.qfrc_bias[: self.nv]
     
+    def _apply_torque(self, tau):
+        tau = np.asarray(tau, dtype=float)
+        self.mj_data.qfrc_applied[:] = 0.0
+        self.mj_data.xfrc_applied[:] = 0.0
+        if self.torque_mode == "ctrl":
+            self.mj_data.ctrl[: self.nv] = tau
+        else:
+            self.mj_data.ctrl[:] = 0.0
+            self.mj_data.qfrc_applied[: self.nv] = tau
+
     def forward_dynamics(self, q, qdot, tau):
         """q̈ from generalized torque tau."""
         self._set_state(q, qdot)
-        self.mj_data.ctrl[:] = 0.0
-        self.mj_data.qfrc_applied[:] = 0.0
-        self.mj_data.xfrc_applied[:] = 0.0
-        self.mj_data.qfrc_applied[: self.nv] = np.asarray(tau, dtype=float)
+        self._apply_torque(tau)
         self._forward()
-        return self.mj_data.qacc.copy()
+        return self.mj_data.qacc[: self.nv].copy()
 
     def _body_forces_from_fext(self, fext):
         if fext is None:
@@ -278,20 +333,29 @@ class Manipulator:
     def step_mujoco(self, q, qdot, tau, dt):
         """Single MuJoCo integration step with direct generalized torque injection."""
         self._set_state(q, qdot)
-        self.mj_data.qfrc_applied[:] = 0.0
-        self.mj_data.xfrc_applied[:] = 0.0
-        self.mj_data.qfrc_applied[: self.nv] = np.asarray(tau, dtype=float)
+        self._apply_torque(tau)
         self.mj_model.opt.timestep = float(dt)
         mujoco.mj_step(self.mj_model, self.mj_data)
-        return self.mj_data.qpos.copy(), self.mj_data.qvel.copy()
+        return self.mj_data.qpos[: self.nq].copy(), self.mj_data.qvel[: self.nv].copy()
 
-    def plant_step(self, q, qdot, tau, dt):
-        """Integrate the plant one step using MuJoCo."""
-        # if underwater is None:
-        #     underwater = self.robot_config.get("underwater", {}).get("enable", False)
-        # if underwater:
-        #     return self.step_underwater_mujoco(q, qdot, tau, dt)
-        return self.step_mujoco(q, qdot, tau, dt)
+    def plant_step(self, q, qdot, tau, dt, substeps=None):
+        """
+        Integrate the plant one control step using MuJoCo.
+
+        If substeps is set (or robot_config['physics_substeps']), integrate that many
+        physics steps of length dt/substeps — matches CaDeLaC (dt=0.02, mj_dt=0.002).
+        """
+        if substeps is None:
+            substeps = int(self.robot_config.get("physics_substeps", 1))
+        if substeps <= 1:
+            return self.step_mujoco(q, qdot, tau, dt)
+
+        h = float(dt) / float(substeps)
+        q_cur = np.asarray(q, dtype=float).copy()
+        qd_cur = np.asarray(qdot, dtype=float).copy()
+        for _ in range(substeps):
+            q_cur, qd_cur = self.step_mujoco(q_cur, qd_cur, tau, h)
+        return q_cur, qd_cur
 
     def underwater_enabled(self):
         return self.robot_config.get("underwater", {}).get("enable", False)

@@ -46,9 +46,20 @@ class ManipulatorODEFunc(nn.Module):
         self.nv = robot.nv
         self.state_dim = 3 * self.nq
 
-        # Input: [q1, ..., q6] | Output: [qddot1, ..., qddot6]
+        residual_input = model_cfg.get("residual_input", "q")
+        if residual_input == "q":
+            input_dim = self.nq
+        elif residual_input in ("q_qdot", "q,qdot", "qv"):
+            input_dim = 2 * self.nq
+            residual_input = "q_qdot"
+        else:
+            raise ValueError(
+                f"Unknown residual_input '{residual_input}'. Use 'q' or 'q_qdot'."
+            )
+        self.residual_input = residual_input
+
         self.residual_dynamics_network = create_residual_mlp(
-            input_dim=self.nq,
+            input_dim=input_dim,
             output_dim=self.nv,
             hidden_layers=model_cfg["hidden_layers"],
             hidden_neurons=model_cfg["hidden_neurons"],
@@ -95,7 +106,10 @@ class ManipulatorODEFunc(nn.Module):
         if self.nominal_only:
             return nominal_dynamics
 
-        residual_dynamics = self.residual_dynamics_network(x)
+        if self.residual_input == "q_qdot":
+            residual_dynamics = self.residual_dynamics_network(torch.cat([x, xdot], dim=1))
+        else:
+            residual_dynamics = self.residual_dynamics_network(x)
         zeros_q = torch.zeros(z.shape[0], self.nq, dtype=z.dtype, device=z.device)
         zeros_tau = torch.zeros(z.shape[0], self.nq, dtype=z.dtype, device=z.device)
         residual_dynamics = torch.cat([zeros_q, residual_dynamics, zeros_tau], dim=1) # [qdot, qddot, tau_dot]

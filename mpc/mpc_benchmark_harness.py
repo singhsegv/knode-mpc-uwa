@@ -98,8 +98,10 @@ def run_single_trajectory_mpc(spec, dt, mpc_horizon, enable_knode=False, knode_p
         solve_times.append(time.perf_counter() - t_start)
 
         u_actual = U_optimal[:, 0]
+
         # q_next, qdot_next = plant.step_rk4(x_current_state[:nq], x_current_state[nq:], u_actual, dt)
-        q_next, qdot_next = plant.step_underwater(x_current_state[:nq], x_current_state[nq:], u_actual, dt)
+        # q_next, qdot_next = plant.step_underwater(x_current_state[:nq], x_current_state[nq:], u_actual, dt)
+        q_next, qdot_next = plant.plant_step(x_current_state[:nq], x_current_state[nq:], u_actual, dt)
 
         x_current_state = np.concatenate([q_next.flatten(), qdot_next.flatten()])
         current_time += dt

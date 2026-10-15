@@ -1,0 +1,14 @@
+{
+    "name": "panda_exc",
+    "dt": 0.02,
+    "mpc_horizon": 12,
+    "duration": 10.0,
+    "n_train_envs": 20,
+    "n_eval_envs": 5,
+    "runs_per_env": 2,
+    "seed": 0,
+    "Q_q": [1000, 1000, 1000, 1000, 500, 500, 500],
+    "Q_qd": [100, 100, 100, 100, 50, 50, 50],
+    "R": [0.2, 0.2, 0.2, 0.2, 1.0, 1.0, 1.0],
+    "notes": "CaDeLaC-matched joint EXC tracking eval: 50 Hz, N=12, Q/R from paper."
+}

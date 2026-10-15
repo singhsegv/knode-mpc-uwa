@@ -10,7 +10,6 @@ import sys
 import torch
 import numpy as np
 import casadi as ca
-import pinocchio.casadi as cpin
 
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 PROJECT_ROOT = os.path.dirname(SCRIPT_DIR)
@@ -19,7 +18,13 @@ if PROJECT_ROOT not in sys.path:
 
 from utils.model_utils import load_state_dict_from_run
 from casadi_knode_callback import ResidualNNCallback
-from robot_descriptions.loaders.pinocchio import load_robot_description
+from casadi_dynamics import (
+    build_mujoco_continuous_dynamics,
+    build_nominal_euler_dynamics,
+    build_pinocchio_continuous_dynamics,
+    get_pinocchio_casadi_triplet,
+    mpc_dynamics_backend,
+)
 
 
 def tensor_to_dm(t):
@@ -51,6 +56,11 @@ class FatropManipulatorControl:
     def __init__(self, horizon, dt, enable_knode=False, run_dir=None, epoch=-1, robot_config=None):
         if robot_config is None:
             raise ValueError("robot_config is required")
+        if mpc_dynamics_backend(robot_config) != "pinocchio":
+            raise ValueError(
+                "Fatrop requires mpc_dynamics_backend='pinocchio' in the robot config. "
+                "Use --solver ipopt with mpc_dynamics_backend='mujoco' to match the MuJoCo plant."
+            )
 
         self.robot_config = robot_config
         self.nq = robot_config["nq"]
@@ -139,43 +149,15 @@ class FatropManipulatorControl:
             raise
 
     def get_casadi_pinn_model(self, gravity=None):
-        if gravity is None:
-            gravity = self.robot_config["model_gravity"]
-
-        pin_robot = load_robot_description(self.robot_config["description"])
-        model = pin_robot.model
-        model.gravity.linear = gravity
-
-        cmodel = cpin.Model(model)
-        cdata = cmodel.createData()
-        return model, cmodel, cdata
+        return get_pinocchio_casadi_triplet(self.robot_config, gravity=gravity)
 
     def get_nominal(self):
-        _, cmodel, cdata = self.get_casadi_pinn_model()
-
-        nq, nv = cmodel.nq, cmodel.nv
-        q = ca.SX.sym("q", nq)
-        v = ca.SX.sym("v", nv)
-        tau = ca.SX.sym("tau", nv)
-
-        qdd = cpin.aba(cmodel, cdata, q, v, tau)
-        x = ca.vertcat(q, v)
-        xdot = ca.vertcat(v, qdd)
-        x_next = x + xdot * self.dt
-        return ca.Function("F", [x, tau], [x_next])
+        return build_nominal_euler_dynamics(self.robot_config, self.dt, backend="pinocchio")
 
     def get_knode(self):
+        nq, nv = self.nq, self.nv
         _, cmodel, cdata = self.get_casadi_pinn_model()
-        nq, nv = cmodel.nq, cmodel.nv
-
-        q_sx = ca.SX.sym("q", nq)
-        v_sx = ca.SX.sym("v", nv)
-        tau_sx = ca.SX.sym("tau", nv)
-        x_sx = ca.vertcat(q_sx, v_sx)
-
-        nominal_qdd = cpin.aba(cmodel, cdata, q_sx, v_sx, tau_sx)
-        nominal_xdot = ca.vertcat(v_sx, nominal_qdd)
-        aba_f = ca.Function("aba_f", [x_sx, tau_sx], [nominal_xdot])
+        aba_f = build_pinocchio_continuous_dynamics(cmodel, cdata)
 
         state_dict, _ = load_state_dict_from_run(self.run_dir, epoch=self.knode_epoch)
         nn_forward, nn_jacobian, nn_jacobian_forward = self._load_residual_nn_numpy(state_dict)

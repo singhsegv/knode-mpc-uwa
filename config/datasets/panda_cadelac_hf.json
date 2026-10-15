@@ -1,0 +1,6 @@
+{
+    "name": "panda_cadelac_hf",
+    "dt": 0.02,
+    "robot": "panda",
+    "notes": "Imported CaDeLaC HuggingFace LQR rollouts via utils.import_cadelac_dataset. No generation — data must already exist under data/panda_cadelac_hf/{train,test}."
+}

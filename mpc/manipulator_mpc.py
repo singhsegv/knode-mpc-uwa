@@ -4,8 +4,6 @@ import sys
 import torch
 import numpy as np
 import casadi as ca
-import pinocchio as pin
-import pinocchio.casadi as cpin
 
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 PROJECT_ROOT = os.path.dirname(SCRIPT_DIR)
@@ -14,7 +12,13 @@ if PROJECT_ROOT not in sys.path:
 
 from utils.model_utils import load_state_dict_from_run
 from casadi_knode_callback import ResidualNNCallback
-from robot_descriptions.loaders.pinocchio import load_robot_description
+from casadi_dynamics import (
+    build_mujoco_continuous_dynamics,
+    build_nominal_euler_dynamics,
+    build_pinocchio_continuous_dynamics,
+    get_pinocchio_casadi_triplet,
+    mpc_dynamics_backend,
+)
 
 
 def tensor_to_dm(t):
@@ -77,11 +81,17 @@ class ManipulatorControl:
     def _build_optimization_problem(self):
         cost = 0
 
-        # TODO: Trajectories are not tracked if not 100 and also Q_terminal is lesser
-        q_weights = np.full(self.nq, 100.0)
-        qdot_weights = np.full(self.nv, 100.0)
+        q_weights = np.asarray(
+            self.robot_config.get("mpc_Q_q", np.full(self.nq, 100.0)), dtype=float
+        )
+        qdot_weights = np.asarray(
+            self.robot_config.get("mpc_Q_qd", np.full(self.nv, 100.0)), dtype=float
+        )
+        r_weights = np.asarray(
+            self.robot_config.get("mpc_R", np.full(self.nu, 0.01)), dtype=float
+        )
         Q = np.diag(np.concatenate([q_weights, qdot_weights]))
-        R = np.diag(np.full(self.nu, 0.01))
+        R = np.diag(r_weights)
         Q_terminal = Q * 10
 
         for k in range(self.mpc_horizon):
@@ -138,83 +148,70 @@ class ManipulatorControl:
             return self.opti.debug.value(self.U), self.opti.debug.value(self.X)
 
     def get_casadi_pinn_model(self, gravity=None):
-        if gravity is None:
-            gravity = self.robot_config["model_gravity"]
-
-        # Uses robot_descriptions pip package now for easy peazy stuff
-        robot_urdf_model_name = self.robot_config["description"]
-        pin_robot = load_robot_description(robot_urdf_model_name)
-        model = pin_robot.model
-        model.gravity.linear = gravity
-
-        cmodel = cpin.Model(model)
-        cdata = cmodel.createData()
-        
-        return model, cmodel, cdata
+        return get_pinocchio_casadi_triplet(self.robot_config, gravity=gravity)
 
     def get_nominal(self):
-        _, cmodel, cdata = self.get_casadi_pinn_model()
-
-        nq, nv = cmodel.nq, cmodel.nv
-        q = ca.SX.sym("q", nq)
-        v = ca.SX.sym("v", nv)
-        tau = ca.SX.sym("tau", nv)
-
-        qdd = cpin.aba(cmodel, cdata, q, v, tau)
-        x = ca.vertcat(q, v)
-        u = tau
-        xdot = ca.vertcat(v, qdd)
-
-        # NOTE: RK4 messes up the real-time performance -> Euler supremacy
-        x_next = x + xdot * self.dt
-        return ca.Function("F", [x, u], [x_next])
+        dynamics = build_nominal_euler_dynamics(self.robot_config, self.dt)
+        self._dynamics_callback = getattr(dynamics, "_mujoco_callback", None)
+        return dynamics
 
     def get_knode(self):
-        _, cmodel, cdata = self.get_casadi_pinn_model()
-        nq, nv = cmodel.nq, cmodel.nv
+        nq, nv = self.nq, self.nv
+        backend = mpc_dynamics_backend(self.robot_config)
 
-        q_sx = ca.SX.sym("q", nq)
-        v_sx = ca.SX.sym("v", nv)
-        tau_sx = ca.SX.sym("tau", nv)
+        if backend == "mujoco":
+            aba_f = build_mujoco_continuous_dynamics(self.robot_config)
+        else:
+            _, cmodel, cdata = self.get_casadi_pinn_model()
+            aba_f = build_pinocchio_continuous_dynamics(cmodel, cdata)
 
-        x_sx = ca.vertcat(q_sx, v_sx)
-        u_sx = tau_sx
-
-        nominal_qdd = cpin.aba(cmodel, cdata, q_sx, v_sx, tau_sx)
-        nominal_xdot = ca.vertcat(v_sx, nominal_qdd)
-        aba_f = ca.Function("aba_f", [x_sx, u_sx], [nominal_xdot])
+        residual_input = "q"
+        model_json = os.path.join(self.run_dir, "model.json")
+        if os.path.isfile(model_json):
+            import json
+            with open(model_json) as f:
+                residual_input = json.load(f).get("residual_input", "q")
+        self.residual_input = residual_input if residual_input not in ("q,qdot", "qv") else "q_qdot"
 
         state_dict, _ = load_state_dict_from_run(self.run_dir, epoch=self.knode_epoch)
         nn_forward, nn_jacobian = self._load_residual_nn_numpy(state_dict)
-        self.nn_cb = ResidualNNCallback(nn_forward, nn_jacobian, nq=nq)
+        in_dim = 2 * nq if self.residual_input == "q_qdot" else nq
+        self.nn_cb = ResidualNNCallback(
+            nn_forward, nn_jacobian, n_in=in_dim, n_out=nv
+        )
 
         x = ca.MX.sym("x", self.nx)
         u = ca.MX.sym("u", self.nu)
         q = x[:nq]
+        v = x[nq:]
 
         nominal_xdot_mx = aba_f(x, u)
-        residual_qdd_mx = self.nn_cb(q)
+        nn_in = ca.vertcat(q, v) if self.residual_input == "q_qdot" else q
+        residual_qdd_mx = self.nn_cb(nn_in)
         xdot = nominal_xdot_mx + ca.vertcat(ca.MX.zeros(nv), residual_qdd_mx)
 
         x_next = x + xdot * self.dt
-        return ca.Function("F", [x, u], [x_next])
+        dynamics = ca.Function("F", [x, u], [x_next])
+        dynamics._aba_f = aba_f
+        dynamics._nn_cb = self.nn_cb
+        return dynamics
 
     def _load_residual_nn_numpy(self, state_dict):
         layers = extract_mlp_layers(state_dict)
+        in_dim = 2 * self.nq if getattr(self, "residual_input", "q") == "q_qdot" else self.nq
 
-        def forward(q):
-            q = np.asarray(q, dtype=np.float64).reshape(self.nq)
-            h = q
+        def forward(inp):
+            h = np.asarray(inp, dtype=np.float64).reshape(in_dim)
             for W, b in layers[:-1]:
                 h = np.tanh(W @ h + b)
             W, b = layers[-1]
             return W @ h + b
 
-        def jacobian(q):
-            q_t = torch.tensor(q, dtype=torch.float64, requires_grad=True).reshape(self.nq)
+        def jacobian(inp):
+            q_t = torch.tensor(inp, dtype=torch.float64, requires_grad=True).reshape(in_dim)
 
             def torch_forward(qq):
-                h = qq.reshape(self.nq)
+                h = qq.reshape(in_dim)
                 for W, b in layers[:-1]:
                     Wt = torch.as_tensor(W, dtype=torch.float64)
                     bt = torch.as_tensor(b, dtype=torch.float64)

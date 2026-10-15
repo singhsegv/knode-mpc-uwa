@@ -1,5 +1,14 @@
 # Robot Models
 
+## CaDeLaC Panda + payload
+
+`robots/panda` is a symlink to the CaDeLaC Franka MJCF. Config `panda.json` uses:
+
+- **Plant:** MuJoCo `scene_no_collision` (+ optional EE box via `robots/panda_payload.py`)
+- **MPC nominal:** Pinocchio from `robots/panda/panda.xml` (`pinocchio_mjcf`)
+
+See `CADELAC.md` for training / multi-env EXC eval.
+
 ## MuJoCo UR5e scenes
 
 Simulation uses Menagerie UR5e via [`robot_descriptions`](https://github.com/robot-descriptions/robot_descriptions.py) (caches `mujoco_menagerie/universal_robots_ur5e/`), wrapped by project scenes in `robots/scenes/`:

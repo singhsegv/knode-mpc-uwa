@@ -66,7 +66,9 @@ def run_closed_loop_mpc(knode_path=None, robot_config=None):
         solve_time = time.perf_counter() - t_start
 
         u_actual = U_optimal[:, 0]
-        q_next, qdot_next = plant.step_rk4(x_current_state[:nq], x_current_state[nq:], u_actual, DT)
+        q_next, qdot_next = plant.plant_step(
+            x_current_state[:nq], x_current_state[nq:], u_actual, DT,
+        )
 
         x_current_state = np.concatenate([q_next.flatten(), qdot_next.flatten()])
         current_time += DT

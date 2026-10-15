@@ -1,0 +1,11 @@
+{
+    "name": "panda_q_qdot",
+    "hidden_layers": 2,
+    "hidden_neurons": 32,
+    "activation": "tanh",
+    "step_size": 0.02,
+    "residual_input": "q_qdot",
+    "nominal_only": false,
+    "perfect_nominal": true,
+    "notes": "Residual Delta-qdd(q, qdot) for Panda payload mismatch; dt matches CaDeLaC 50 Hz."
+}

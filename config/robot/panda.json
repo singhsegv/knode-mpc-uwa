@@ -1,0 +1,20 @@
+{
+    "name": "panda",
+    "robot_family": "panda",
+    "scene": "scene_no_collision",
+    "ee_frame": "end_effector",
+    "pinocchio_mjcf": "robots/panda/panda.xml",
+    "mpc_dynamics_backend": "pinocchio",
+    "nq": 7,
+    "nv": 7,
+    "default_q": [0.0, -0.4, 0.0, -2.4, 0.0, 2.2, -0.7853],
+    "plant_gravity": [0.0, 0.0, -9.81],
+    "model_gravity": [0.0, 0.0, -9.81],
+    "torque_limits": [87.0, 87.0, 87.0, 87.0, 12.0, 12.0, 12.0],
+    "kp": [100.0, 100.0, 100.0, 100.0, 40.0, 40.0, 40.0],
+    "kd": [10.0, 10.0, 10.0, 10.0, 4.0, 4.0, 4.0],
+    "task_space_dim": 3,
+    "torque_mode": "qfrc_applied",
+    "physics_substeps": 10,
+    "notes": "CaDeLaC Panda nominal (no EE payload). MPC uses Pinocchio from panda.xml; plant uses MuJoCo scene_no_collision."
+}

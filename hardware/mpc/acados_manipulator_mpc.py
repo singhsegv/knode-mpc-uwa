@@ -1,5 +1,11 @@
 """
-Acados MPC for n-DOF manipulators (nominal ABA + Euler).
+Acados MPC for an n-DOF arm on a ros2_control stack.
+
+The dynamics model is the Pinocchio model built from the same URDF the
+controller manager is running. Joint order is that model's configuration
+order, which is also Ros2ControlPlant.joint_names. The node reads
+[q, qdot] from the plant, calls solve(), and writes U[:, 0] with
+write_effort(). This class does not publish or subscribe.
 
 Rosetta stone vs mpc/manipulator_mpc.py (CasADi Opti + IPOPT):
 
@@ -14,63 +20,96 @@ Rosetta stone vs mpc/manipulator_mpc.py (CasADi Opti + IPOPT):
   opti.solver("ipopt"); opti.solve()        AcadosOcpSolver(...); solver.solve()
 """
 import os
-import sys
 
 import numpy as np
 import casadi as ca
+import pinocchio as pin
 from scipy.linalg import block_diag
 from acados_template import AcadosModel, AcadosOcp, AcadosOcpSolver
 
 import pinocchio.casadi as cpin
 
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
-PROJECT_ROOT = os.path.dirname(SCRIPT_DIR)
-if PROJECT_ROOT not in sys.path:
-    sys.path.insert(0, PROJECT_ROOT)
 
-from utils.model_utils import load_state_dict_from_run
-from robot_descriptions.loaders.pinocchio import load_robot_description
-
-
-def tensor_to_dm(t):
-    """torch tensor -> CasADi DM."""
-    return ca.DM(t.detach().cpu().numpy())
+# URDF parsers store "no limit" as a huge finite number.
+_UNLIMITED = 1e6
 
 
 class AcadosManipulatorControl:
-    def __init__(self, horizon, dt, enable_knode=False, run_dir=None, epoch=-1, robot_config=None, json_path=None):
+    def __init__(self, model, horizon, dt, torque_limits=None, gravity=None, json_path=None):
         """
+        model: pinocchio.Model from the ros2_control URDF.
+        torque_limits: (nv,) continuous torque in Pinocchio order.
+            Defaults to the URDF effort limit.
+        gravity: (3,) linear gravity in the base frame. Defaults to model.gravity.
         json_file must be a bare filename (Acados writes it under code_export_directory).
         """
-        if enable_knode:
-            if run_dir is None:
-                raise ValueError("run_dir is required when enable_knode=True")
+        self.model = pin.Model(model)
+        if gravity is not None:
+            self.model.gravity.linear = np.asarray(gravity, dtype=float)
 
-            self.run_dir = run_dir
-            self.knode_epoch = epoch
-
-        self.robot_config = robot_config
-        self.nq = robot_config["nq"]
-        self.nv = robot_config["nv"]
-        self.nx = 2 * self.nq
+        self.nq = self.model.nq
+        self.nv = self.model.nv
+        self.nx = self.nq + self.nv
         self.nu = self.nv
-        self.torque_limits = np.asarray(robot_config["torque_limits"], dtype=float)
         self.mpc_horizon = horizon
         self.dt = dt
 
-        # Acados: build OCP template once, then compile to a C solver.
-        self.json_file = "acados_ocp.json" if json_path is None else os.path.basename(json_path)
+        if torque_limits is None:
+            torque_limits = self._torque_limits_from_model()
+        self.torque_limits = np.asarray(torque_limits, dtype=float).reshape(self.nu)
+        if np.any(self.torque_limits <= 0.0):
+            raise ValueError("torque_limits must be positive")
 
-        ocp = self._build_acados_ocp(enable_knode)
+        self._u_guess = None
+        self._x_guess = None
+
+        self.json_file = "acados_ocp.json" if json_path is None else os.path.basename(json_path)
+        ocp = self._build_acados_ocp()
         self.solver = AcadosOcpSolver(ocp, json_file=self.json_file, build=True)
 
+    def _torque_limits_from_model(self):
+        limits = np.array(self.model.effortLimit, dtype=float).reshape(self.nv)
+        if np.any(~np.isfinite(limits)) or np.any(limits <= 0.0) or np.any(limits >= _UNLIMITED):
+            raise ValueError(
+                "URDF effort limits are missing. Pass torque_limits= (continuous torque per joint)."
+            )
+        return limits
+
+    def _bounded_states(self):
+        """Position and velocity indices that have a real URDF limit."""
+        q_min = np.array(self.model.lowerPositionLimit, dtype=float)
+        q_max = np.array(self.model.upperPositionLimit, dtype=float)
+        v_max = np.array(self.model.velocityLimit, dtype=float)
+
+        idx = []
+        lb = []
+        ub = []
+        for i in range(self.nq):
+            if (
+                np.isfinite(q_min[i]) and np.isfinite(q_max[i])
+                and abs(q_min[i]) < _UNLIMITED and abs(q_max[i]) < _UNLIMITED
+            ):
+                idx.append(i)
+                lb.append(q_min[i])
+                ub.append(q_max[i])
+        for i in range(self.nv):
+            if np.isfinite(v_max[i]) and 0.0 < v_max[i] < _UNLIMITED:
+                idx.append(self.nq + i)
+                lb.append(-v_max[i])
+                ub.append(v_max[i])
+
+        if not idx:
+            return None
+        return (
+            np.asarray(idx, dtype=int),
+            np.asarray(lb, dtype=float),
+            np.asarray(ub, dtype=float),
+        )
+
     def get_nominal_dynamics(self):
-        """
-        ABA + forward Euler
-        TODO: Check if RK4 is feasible now and is beneficial
-        TODO: Check if we need residual network to be SX too somehow.
-        """
-        _, cmodel, cdata = self.get_casadi_pinn_model()
+        """ABA + forward Euler. dt matches the ros2_control command period."""
+        _, cmodel, cdata = self.get_casadi_model()
         nq, nv = cmodel.nq, cmodel.nv
 
         q = ca.SX.sym("q", nq)
@@ -85,18 +124,10 @@ class AcadosManipulatorControl:
         x_next = x + xdot * self.dt
         return x, u, x_next
 
-    
-    def _build_acados_ocp(self, enable_knode):
-        """
-        Build phase of the OCP -> C code generation
-        """
+    def _build_acados_ocp(self):
+        """Build phase of the OCP -> C code generation."""
         nx, nu = self.nx, self.nu
-
-        # Acados stores one discrete map; dims.N repeats it.
-        if enable_knode:
-            x, u, x_next = self.get_knode_dynamics()
-        else:
-            x, u, x_next = self.get_nominal_dynamics()
+        x, u, x_next = self.get_nominal_dynamics()
 
         model = AcadosModel()
         model.name = "knode_mpc"
@@ -104,17 +135,16 @@ class AcadosManipulatorControl:
         model.u = u
         model.disc_dyn_expr = x_next
 
-        # Opti stage level cost vs Acados NONLINEAR_LS minimizes || y - yref ||_W^2 with
+        # NONLINEAR_LS minimizes || y - yref ||_W^2 with
         #   y = [x; u],  yref = [x_ref; 0],  W = blkdiag(Q, R)
-        # which expands to the same quadratic.
-        model.cost_y_expr = ca.vertcat(x, u)   # ny = nx + nu
-        model.cost_y_expr_e = x                # terminal: only state (ny_e = nx)
+        model.cost_y_expr = ca.vertcat(x, u)
+        model.cost_y_expr_e = x
 
         q_weights = np.full(self.nq, 100.0)
         qdot_weights = np.full(self.nv, 100.0)
         Q = np.diag(np.concatenate([q_weights, qdot_weights]))
         R = np.diag(np.full(self.nu, 0.01))
-        Q_terminal = Q * 10  # Opti: Q_terminal = Q * 10
+        Q_terminal = Q * 10
 
         ocp = AcadosOcp()
         ocp.model = model
@@ -124,10 +154,9 @@ class AcadosManipulatorControl:
 
         ocp.cost.cost_type = "NONLINEAR_LS"
         ocp.cost.cost_type_e = "NONLINEAR_LS"
-        ocp.cost.W = block_diag(Q, R)        
+        ocp.cost.W = block_diag(Q, R)
         ocp.cost.W_e = Q_terminal
 
-        # Placeholders; real refs set every solve() via set(k, "yref", ...)
         ocp.cost.yref = np.zeros(nx + nu)
         ocp.cost.yref_e = np.zeros(nx)
 
@@ -135,11 +164,19 @@ class AcadosManipulatorControl:
         ocp.constraints.ubu = self.torque_limits.copy()
         ocp.constraints.idxbu = np.arange(nu)
 
-        # Opti: subject_to(X[:,0] == x0)  — x0 is a parameter updated each step.
-        # Acados: equality via lbx=ubx at stage 0 (updated in solve()).
+        # Stage 0 is the measured plant state. Updated in solve().
         ocp.constraints.x0 = np.zeros(nx)
 
-        # Solver options: RTI = 1 SQP step per call (vs IPOPT's many NLP iters)
+        bounds = self._bounded_states()
+        if bounds is not None:
+            idx, lb, ub = bounds
+            ocp.constraints.idxbx = idx
+            ocp.constraints.lbx = lb
+            ocp.constraints.ubx = ub
+            ocp.constraints.idxbx_e = idx
+            ocp.constraints.lbx_e = lb
+            ocp.constraints.ubx_e = ub
+
         ocp.solver_options.qp_solver = "PARTIAL_CONDENSING_HPIPM"
         ocp.solver_options.hessian_approx = "GAUSS_NEWTON"
         ocp.solver_options.integrator_type = "DISCRETE"
@@ -149,34 +186,56 @@ class AcadosManipulatorControl:
         ocp.solver_options.print_level = 0
 
         ocp.code_export_directory = os.path.join(SCRIPT_DIR, "c_generated_code")
-
         return ocp
 
-    def solve(self, current_state, reference_horizon, u_guess=None, x_guess=None):
-        current_state = np.asarray(current_state, dtype=float).reshape(self.nx)
-        reference_horizon = np.asarray(reference_horizon, dtype=float)
-        assert reference_horizon.shape == (self.nx, self.mpc_horizon + 1)
+    def _reference_horizon(self, reference):
+        """
+        reference is either a joint goal (nq,) or (nx,), held for the whole
+        horizon, or a full trajectory (nx, N+1). qdot defaults to zero when
+        only q is given, which is the regulation case.
+        """
+        reference = np.asarray(reference, dtype=float)
+        if reference.shape == (self.nq,):
+            reference = np.concatenate([reference, np.zeros(self.nv)])
+        if reference.shape == (self.nx,):
+            return np.repeat(reference.reshape(self.nx, 1), self.mpc_horizon + 1, axis=1)
+        if reference.shape == (self.nx, self.mpc_horizon + 1):
+            return reference
+        raise ValueError(
+            f"reference shape {reference.shape} is not {(self.nq,)}, {(self.nx,)}, "
+            f"or {(self.nx, self.mpc_horizon + 1)}"
+        )
 
-        # Replacement for Opti set_value(self.x0, current_state)
+    def solve(self, current_state, reference, u_guess=None, x_guess=None):
+        """
+        current_state: [q, qdot] from Ros2ControlPlant.read_state(), Pinocchio order.
+        reference: joint goal or state horizon. See _reference_horizon.
+        Returns U (nu, N) and X (nx, N+1). The command to write is U[:, 0].
+        """
+        current_state = np.asarray(current_state, dtype=float).reshape(self.nx)
+        reference_horizon = self._reference_horizon(reference)
+
+        if u_guess is None:
+            u_guess = self._u_guess
+        if x_guess is None:
+            x_guess = self._x_guess
+
         self.solver.set(0, "lbx", current_state)
         self.solver.set(0, "ubx", current_state)
 
         for k in range(self.mpc_horizon):
-            # "temp" is the Stage yref = [x_ref; u_ref] with u_ref=0 → matches Opti u'R u term."""
-            temp = np.asarray(reference_horizon[:, k], dtype=float).reshape(self.nx) # Shape (12, )
-            temp = np.concatenate([temp, np.zeros(self.nu)]) # Shape (18, )
-
-            self.solver.set(k, "yref", temp)
+            yref = np.concatenate([
+                np.asarray(reference_horizon[:, k], dtype=float).reshape(self.nx),
+                np.zeros(self.nu),
+            ])
+            self.solver.set(k, "yref", yref)
 
             if u_guess is not None:
                 self.solver.set(k, "u", np.asarray(u_guess[:, k], dtype=float))
-
             if x_guess is not None:
                 self.solver.set(k, "x", np.asarray(x_guess[:, k], dtype=float))
 
-        # Terminal: only state residual (cost_y_expr_e = x)
         self.solver.set(self.mpc_horizon, "yref", reference_horizon[:, self.mpc_horizon])
-
         if x_guess is not None:
             self.solver.set(self.mpc_horizon, "x", np.asarray(x_guess[:, self.mpc_horizon], dtype=float))
 
@@ -186,16 +245,23 @@ class AcadosManipulatorControl:
 
         U = np.column_stack([self.solver.get(k, "u") for k in range(self.mpc_horizon)])
         X = np.column_stack([self.solver.get(k, "x") for k in range(self.mpc_horizon + 1)])
+        self._store_guess(current_state, U, X)
         return U, X
 
-    def get_casadi_pinn_model(self, gravity=None):
-        if gravity is None:
-            gravity = self.robot_config["model_gravity"]
+    def _store_guess(self, current_state, U, X):
+        u_prev = np.zeros_like(U)
+        u_prev[:, :-1] = U[:, 1:]
+        u_prev[:, -1] = U[:, -1]
 
-        pin_robot = load_robot_description(self.robot_config["description"])
-        model = pin_robot.model
-        model.gravity.linear = np.asarray(gravity, dtype=float)
+        x_prev = np.zeros_like(X)
+        x_prev[:, 0] = current_state
+        x_prev[:, 1:-1] = X[:, 2:]
+        x_prev[:, -1] = X[:, -1]
 
-        cmodel = cpin.Model(model)
+        self._u_guess = u_prev
+        self._x_guess = x_prev
+
+    def get_casadi_model(self):
+        cmodel = cpin.Model(self.model)
         cdata = cmodel.createData()
-        return model, cmodel, cdata
+        return self.model, cmodel, cdata

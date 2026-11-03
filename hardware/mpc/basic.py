@@ -17,7 +17,7 @@ import rclpy
 from rclpy.node import Node
 from geometry_msgs.msg import Point
 
-from simulator import Manipulator
+from simulator import Ros2ControlPlant
 from acados_manipulator_mpc import AcadosManipulatorControl
 
 import pink
@@ -40,11 +40,8 @@ class MPCNode(Node):
         self.current_q = pinocchio.neutral(self.model)
         self.pink_config = pink.Configuration(self.model, self.model_data, self.current_q)
 
-        self.plant = Manipulator(robot_config=robot_config, enable_viz=False)
-        self.mpc = AcadosManipulatorControl(
-            horizon=mpc_horizon, dt=dt, enable_knode=enable_knode,
-            run_dir=knode_path, robot_config=robot_config,
-        )
+        self.plant = None
+        self.mpc = None
 
     def urdf_callback(self, msg):
         """
@@ -60,8 +57,21 @@ class MPCNode(Node):
 
             self.ee_frame_id = self.model.getFrameId(self.ee_frame_name)
             self.base_frame_id = self.model.getFrameId(self.base_frame_name)
-            self.joint_names = [name for name in self.model.names if name != "universe"]
+            self.joint_names = [
+                name for i, name in enumerate(self.model.names)
+                if self.model.joints[i].nq > 0
+            ]
             self.current_q = pinocchio.neutral(self.model)
+            if self.model.nq != len(self.joint_names) or self.model.nv != len(self.joint_names):
+                raise ValueError("plant expects one position and one velocity per joint")
+
+            self.plant = Ros2ControlPlant(self, self.joint_names)
+            self.get_logger().info("Building Acados solver from robot_description...")
+            self.mpc = AcadosManipulatorControl(
+                self.model,
+                horizon=self.mpc_horizon,
+                dt=self.dt,
+            )
 
             self.get_logger().info(f"Model built successfully. Controllable joints: {len(self.joint_names)}")
         except Exception as e:
@@ -102,28 +112,16 @@ class MPCNode(Node):
         self.track_pose(self.current_target_pose)
 
     def track_pose(self, target_pose_cartesian):
-        # TODO: Read from a ros2 based plant
-        x_current_state = np.array([0])
-        X_ref = self.inverse_kinematics(q_prev, target_pose_cartesian)
+        if self.plant is None or self.mpc is None or not self.plant.ready:
+            self.get_logger().warn("joint state not available yet")
+            return
 
-        u_prev, x_prev = None, None
-        U_optimal, X_optimal = mpc.solve(x_current_state, X_ref, u_guess=u_prev, x_guess=x_prev)
+        q, qdot = self.plant.read_state()
+        x_current_state = np.concatenate([q, qdot])
+        q_des, _ = self.inverse_kinematics(None, q, target_pose_cartesian)
 
-        u_actual = U_optimal[:, 0]
-        # q_next, qdot_next = plant.step_rk4(x_current_state[:nq], x_current_state[nq:], u_actual, dt)
-        execute(u_actual)
-
-        x_current_state = np.concatenate([q_next.flatten(), qdot_next.flatten()])
-        current_time += dt
-
-        u_prev = np.zeros_like(U_optimal)
-        u_prev[:, :-1] = U_optimal[:, 1:]
-        u_prev[:, -1] = U_optimal[:, -1]
-
-        x_prev = np.zeros_like(X_optimal)
-        x_prev[:, 0] = x_current_state 
-        x_prev[:, 1:-1] = X_optimal[:, 2:]
-        x_prev[:, -1] = X_optimal[:, -1]
+        U_optimal, _ = self.mpc.solve(x_current_state, q_des)
+        self.plant.write_effort(U_optimal[:, 0])
     
 
 if __name__ == "__main__":

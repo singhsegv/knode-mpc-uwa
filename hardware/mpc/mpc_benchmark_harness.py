@@ -31,9 +31,14 @@ from trajectory_utils import (
 
 def get_plant_and_controller(dt=0.001, mpc_horizon=20, enable_knode=False, knode_path=None, robot_config=None, solver="ipopt"):
     plant = Manipulator(robot_config=robot_config, enable_viz=False)
+    if enable_knode:
+        print("hardware Acados controller has no KNODE residual; using nominal ABA")
     mpc = AcadosManipulatorControl(
-        horizon=mpc_horizon, dt=dt, enable_knode=enable_knode,
-        run_dir=knode_path, robot_config=robot_config,
+        plant.model,
+        horizon=mpc_horizon,
+        dt=dt,
+        torque_limits=robot_config["torque_limits"],
+        gravity=robot_config["model_gravity"],
     )
     return plant, mpc
 

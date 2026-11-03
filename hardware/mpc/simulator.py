@@ -1,232 +1,154 @@
-import os
-import json
+"""
+Hardware plant for a running ros2_control stack.
 
-SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
-PROJECT_ROOT = os.path.dirname(SCRIPT_DIR)
-ROBOT_CONFIG_DIR = os.path.join(PROJECT_ROOT, "config", "robot")
+Replaces the simulated step (RK4 / torchdiffeq). Each tick the MPC node
+reads [q, qdot] and writes the first optimal torque. The controller
+manager holds that torque until the next command.
+
+Expects:
+  - joint_state_broadcaster on `joint_states` (sensor_msgs/JointState)
+  - forward_command_controller on the effort interface, command topic
+    `forward_effort_controller/commands` (std_msgs/Float64MultiArray)
+
+`joint_names` is the Pinocchio / MPC order. Torque vectors are in that
+order. The effort command is published in `command_joint_names` order,
+which must match the controller yaml.
+"""
+import threading
 
 import numpy as np
-import pinocchio as pin
 
-import torch
-from torchdiffeq import odeint
-
-from pinocchio.visualize import MeshcatVisualizer
-from robot_descriptions.loaders.pinocchio import load_robot_description
+from rclpy.qos import QoSProfile, ReliabilityPolicy, HistoryPolicy, qos_profile_sensor_data
+from sensor_msgs.msg import JointState
+from std_msgs.msg import Float64MultiArray
 
 
-DEFAULT_ROBOT_NAME = "ur5"
+_COMMAND_QOS = QoSProfile(
+    reliability=ReliabilityPolicy.RELIABLE,
+    history=HistoryPolicy.KEEP_LAST,
+    depth=1,
+)
 
 
-def load_robot_config(name=None):
-    """Load robot config JSON and resolve model assets."""
-    if name is None:
-        name = DEFAULT_ROBOT_NAME
+class Ros2ControlPlant:
+    def __init__(
+        self,
+        node,
+        joint_names,
+        command_joint_names=None,
+        joint_states_topic="joint_states",
+        effort_command_topic="forward_effort_controller/commands",
+        velocity_filter_tau=0.05,
+    ):
+        """
+        velocity_filter_tau: seconds. Differentiates position and low-passes
+        it into qdot. Set to 0 to use JointState.velocity as published.
+        """
+        self._node = node
+        self.joint_names = list(joint_names)
+        self.nq = len(self.joint_names)
+        if self.nq == 0:
+            raise ValueError("joint_names is empty")
 
-    path = os.path.join(ROBOT_CONFIG_DIR, f"{name}.json")
-    if not os.path.isfile(path):
-        raise FileNotFoundError(f"Robot config not found: {path}")
-
-    with open(path) as f:
-        cfg = json.load(f)
-
-    cfg = dict(cfg)
-
-    cfg["plant_gravity"] = np.asarray(cfg["plant_gravity"], dtype=float)
-    cfg["model_gravity"] = np.asarray(cfg["model_gravity"], dtype=float)
-
-    cfg["default_q"] = np.asarray(cfg["default_q"], dtype=float)
-    cfg["torque_limits"] = np.asarray(cfg["torque_limits"], dtype=float)
-
-    cfg["kp"] = np.asarray(cfg["kp"], dtype=float)
-    cfg["kd"] = np.asarray(cfg["kd"], dtype=float)
-    if cfg["kp"].shape[0] != cfg["nq"] or cfg["kd"].shape[0] != cfg["nq"]:
-        raise ValueError(f"Robot config {name}: kp/kd length must match nq={cfg['nq']}")
-
-    return cfg, path
-
-
-def make_robot(robot_name, enable_viz=False):
-    """Build a Manipulator from a robot config name."""
-    robot_config, robot_config_path = load_robot_config(robot_name)
-    robot = Manipulator(robot_config=robot_config, enable_viz=enable_viz)
-    return robot, robot_config, robot_config_path
-
-
-class Manipulator:
-    """
-    Pinocchio-based dynamics shared by data generation, K-NODE nominal model, and MPC plant.
-    TODO: Move to a full "position + orientation" space later.
-    """
-    def __init__(self, robot_config, enable_viz=False, gravity=None):
-        self.robot_config = robot_config
-        
-        robot_urdf_model = robot_config["description"] # Uses robot_descriptions package now for easy peazy stuff
-        pin_robot = load_robot_description(robot_urdf_model)
-
-        self.model = pin_robot.model
-        self.collision_model = pin_robot.collision_model
-        self.visual_model = pin_robot.visual_model
-        
-        self.data = pin_robot.data
-        self.nq = self.model.nq
-        self.nv = self.model.nv
-
-        ee_frame = robot_config["ee_frame"]
-        self.ee_frame_id = self.model.getFrameId(ee_frame)
-        self.task_space_dim = 3
-
-        if gravity is None:
-            gravity = robot_config.get("plant_gravity", np.array([0.0, 0.0, -9.81]))
-
-        self.model.gravity.linear = np.asarray(gravity, dtype=float)
-
-        self.viz = None
-        if enable_viz:
-            self._init_meshcat()
-
-    def _init_meshcat(self):
-        self.viz = MeshcatVisualizer(
-            self.model, self.collision_model, self.visual_model,
+        if command_joint_names is None:
+            command_joint_names = self.joint_names
+        self.command_joint_names = list(command_joint_names)
+        if len(self.command_joint_names) != self.nq:
+            raise ValueError("command_joint_names must have one entry per joint")
+        unknown = [name for name in self.command_joint_names if name not in self.joint_names]
+        if unknown:
+            raise ValueError(f"command joints not in joint_names: {unknown}")
+        self._command_index = np.array(
+            [self.joint_names.index(name) for name in self.command_joint_names],
+            dtype=int,
         )
-        self.viz.initViewer(open=True)
-        self.viz.loadViewerModel()
 
-    def mass_matrix(self, q):
-        pin.crba(self.model, self.data, q)
-        return np.array(self.data.M)
+        self.velocity_filter_tau = float(velocity_filter_tau)
 
-    def bias_forces(self, q, qdot):
-        return pin.nle(self.model, self.data, q, qdot)
+        self._lock = threading.Lock()
+        self._q = None
+        self._qdot = None
+        self._effort = None
+        self._q_prev = None
+        self._t_prev = None
+        self._qdot_filt = None
 
-    def gravity_forces(self, q):
-        """Generalized gravity torque g(q)."""
-        return np.array(pin.computeGeneralizedGravity(self.model, self.data, q))
+        self._state_sub = node.create_subscription(
+            JointState,
+            joint_states_topic,
+            self._on_joint_state,
+            qos_profile_sensor_data,
+        )
+        self._cmd_pub = node.create_publisher(
+            Float64MultiArray,
+            effort_command_topic,
+            _COMMAND_QOS,
+        )
+        node.get_logger().info(
+            f"plant: state '{joint_states_topic}', effort '{effort_command_topic}', "
+            f"joints {self.joint_names}"
+        )
 
-    def inverse_dynamics(self, q, qdot, qddot):
-        """tau = M(q) qddot + C(q, qdot) qdot + g(q)."""
-        return pin.rnea(self.model, self.data, q, qdot, qddot)
+    @property
+    def ready(self):
+        with self._lock:
+            return self._q is not None
 
-    def forward_dynamics(self, q, qdot, tau):
-        return pin.aba(self.model, self.data, q, qdot, tau)
+    def read_state(self):
+        """Latest (q, qdot) in joint_names order."""
+        with self._lock:
+            if self._q is None:
+                raise RuntimeError("no joint state received yet")
+            return self._q.copy(), self._qdot.copy()
 
-    def ee_position(self, q):
-        """End-effector position (x, y, z) from Pinocchio FK."""
-        pin.forwardKinematics(self.model, self.data, q)
-        pin.updateFramePlacements(self.model, self.data)
-        return np.array(self.data.oMf[self.ee_frame_id].translation)
+    def write_effort(self, tau):
+        """Publish generalized torque. `tau` is in joint_names order."""
+        tau = np.asarray(tau, dtype=float).reshape(-1)
+        if tau.shape != (self.nq,):
+            raise ValueError(f"tau length {tau.shape[0]} != nq {self.nq}")
 
-    def ee_positions(self, q_traj):
-        """Map (N, nq) joint trajectory to (N, 3) EE positions."""
-        xyz = np.empty((len(q_traj), self.task_space_dim))
-        for i, q in enumerate(q_traj):
-            xyz[i] = self.ee_position(q)
-        return xyz
+        msg = Float64MultiArray()
+        msg.data = tau[self._command_index].tolist()
+        self._cmd_pub.publish(msg)
 
-    def simulate_rollout(self, q0, qdot0, taus, dt, use_torchdiffeq=True):
-        """
-        Pinocchio RK4 rollout using a sequence of torques.
-        Returns (N, nq) q and (N, nv) qdot logs (pre-step convention).
-        """
-        n = len(taus)
-        q_log = np.empty((n, self.nq))
-        qdot_log = np.empty((n, self.nv))
+    def _on_joint_state(self, msg):
+        index = {name: i for i, name in enumerate(msg.name)}
+        if any(name not in index for name in self.joint_names):
+            return
 
-        q = np.asarray(q0, dtype=float).copy()
-        qdot = np.asarray(qdot0, dtype=float).copy()
-        for i in range(n):
-            q_log[i] = q
-            qdot_log[i] = qdot
+        idx = [index[name] for name in self.joint_names]
+        q = np.asarray(msg.position, dtype=float)[idx]
 
-            if use_torchdiffeq:
-                q, qdot = self.step_torchdiffeq(q, qdot, taus[i], dt)
+        t = msg.header.stamp.sec + msg.header.stamp.nanosec * 1e-9
+        if t <= 0.0:
+            t = self._node.get_clock().now().nanoseconds * 1e-9
+
+        if self.velocity_filter_tau > 0.0 and self._q_prev is not None:
+            dt = t - self._t_prev
+            if dt > 1e-6:
+                dq = (q - self._q_prev + np.pi) % (2.0 * np.pi) - np.pi
+                qdot_meas = dq / dt
+                alpha = dt / (self.velocity_filter_tau + dt)
+                qdot = (1.0 - alpha) * self._qdot_filt + alpha * qdot_meas
             else:
-                q, qdot = self.step_rk4(q, qdot, taus[i], dt)
+                qdot = self._qdot_filt
+        elif len(msg.velocity) >= max(idx) + 1:
+            qdot = np.asarray(msg.velocity, dtype=float)[idx]
+        else:
+            qdot = np.zeros(self.nq)
 
-        return q_log, qdot_log
+        effort = None
+        if len(msg.effort) >= max(idx) + 1:
+            effort = np.asarray(msg.effort, dtype=float)[idx]
 
-    def move_to(self, q):
-        """Update frame placements for visualization / FK."""
-        pin.forwardKinematics(self.model, self.data, q)
-        pin.updateFramePlacements(self.model, self.data)
+        with self._lock:
+            first = self._q is None
+            self._q = q
+            self._qdot = qdot
+            self._effort = effort
+            self._q_prev = q
+            self._t_prev = t
+            self._qdot_filt = qdot
 
-    def ee_jacobian(self, q):
-        """3 x nv position Jacobian for the end-effector frame."""
-        pin.forwardKinematics(self.model, self.data, q)
-        pin.updateFramePlacements(self.model, self.data)
-        jac = pin.computeFrameJacobian(
-            self.model,
-            self.data,
-            q,
-            self.ee_frame_id,
-            pin.LOCAL_WORLD_ALIGNED,
-        )
-        return jac[: self.task_space_dim]
-
-    def step_rk4(self, q, qdot, tau, dt):
-        def rhs(q_state, qdot_state):
-            qdd = self.forward_dynamics(q_state, qdot_state, tau)
-            return qdot_state, qdd
-
-        k1_q, k1_v = rhs(q, qdot)
-        k2_q, k2_v = rhs(q + 0.5 * dt * k1_q, qdot + 0.5 * dt * k1_v)
-        k3_q, k3_v = rhs(q + 0.5 * dt * k2_q, qdot + 0.5 * dt * k2_v)
-        k4_q, k4_v = rhs(q + dt * k3_q, qdot + dt * k3_v)
-
-        q_next = q + (dt / 6.0) * (k1_q + 2.0 * k2_q + 2.0 * k3_q + k4_q)
-        qdot_next = qdot + (dt / 6.0) * (k1_v + 2.0 * k2_v + 2.0 * k3_v + k4_v)
-
-        return q_next, qdot_next
-
-    def step_torchdiffeq(self, q, qdot, tau, dt):
-        """Steps dynamics using torchdiffeq RK4 with zero-order hold on tau."""
-        q = torch.tensor(q, dtype=torch.float64)
-        qdot = torch.tensor(qdot, dtype=torch.float64)
-
-        def ode_func(t, state):
-            q_state, qdot_state = state
-            q_state = q_state.detach().cpu().numpy()
-            qdot_state = qdot_state.detach().cpu().numpy()
-            qdd = self.forward_dynamics(q_state, qdot_state, tau)
-            return (
-                torch.tensor(qdot_state, dtype=torch.float64),
-                torch.tensor(qdd, dtype=torch.float64),
-            )
-
-        t_span = torch.tensor([0.0, dt], dtype=q.dtype, device=q.device)
-        initial_state = (q, qdot)
-        trajectory = odeint(
-            ode_func,
-            initial_state,
-            t_span,
-            method="rk4",
-            options={"step_size": dt},
-        )
-
-        q_next = trajectory[0][-1]
-        qdot_next = trajectory[1][-1]
-        return q_next.detach().cpu().numpy(), qdot_next.detach().cpu().numpy()
-
-    def get_nominal_dynamics(self, q, qdot, tau):
-        qdd = self.forward_dynamics(q, qdot, tau)
-        return qdot, qdd
-
-    def get_imperfect_dynamics(self, q, qdot, tau):
-        tau_eff = tau + self.gravity_forces(q)
-        qdd = self.forward_dynamics(q, qdot, tau_eff)
-        return qdot, qdd
-
-    def display(self, q):
-        if self.viz is not None:
-            self.viz.display(q)
-
-    def enable_visualization(self):
-        self._init_meshcat()
-
-    def get_random_config(self):
-        return pin.randomConfiguration(self.model)
-
-    def get_default_config(self):
-        if self.robot_config is not None:
-            return self.robot_config["default_q"].copy()
-        return np.zeros(self.nq)
+        if first:
+            self._node.get_logger().info("plant: first joint state received")
